@@ -13,6 +13,7 @@ import (
 	"github.com/briancain/devpod-provider-nomad/pkg/options"
 	"github.com/hashicorp/nomad/api"
 	"github.com/loft-sh/devpod/pkg/client"
+	dockerterm "github.com/moby/term"
 )
 
 type Nomad struct {
@@ -156,6 +157,11 @@ func (n *Nomad) CommandDevContainer(
 
 	sizeCh := make(chan api.TerminalSize, 1)
 
-	return n.client.Allocations().Exec(ctx, alloc, task, true, []string{command},
+	// Detect if stdin is a terminal to determine TTY allocation
+	// When DevPod injects its agent, stdin is a pipe (not a terminal)
+	// When running interactive commands, stdin is a real terminal
+	_, isTTY := dockerterm.GetFdInfo(stdin)
+
+	return n.client.Allocations().Exec(ctx, alloc, task, isTTY, []string{"/bin/sh", "-c", command},
 		stdin, stdout, stderr, sizeCh, nil)
 }

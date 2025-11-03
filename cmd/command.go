@@ -42,10 +42,15 @@ func (cmd *CommandCmd) Run(
 		return err
 	}
 
+	command := os.Getenv("DEVCONTAINER_COMMAND")
+	if command == "" {
+		return errors.New("DEVCONTAINER_COMMAND environment variable is empty")
+	}
+
 	code, err := nomad.CommandDevContainer(ctx,
 		options.JobId,
 		os.Getenv("DEVCONTAINER_USER"),
-		os.Getenv("DEVCONTAINER_COMMAND"),
+		command,
 		os.Stdin,
 		os.Stdout,
 		os.Stderr,

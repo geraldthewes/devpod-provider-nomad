@@ -53,7 +53,8 @@ binaries:  # Optional binaries DevPod should download for this provider
       path: ##PROJECT_ROOT##/release/devpod-provider-nomad-windows-amd64.exe
       checksum: ##CHECKSUM_WINDOWS_AMD64##
 exec:
-  command: ${NOMAD_PROVIDER} command # The command to run
+  command: |-
+    DEVCONTAINER_COMMAND="${COMMAND}" DEVCONTAINER_USER="${USER}" ${NOMAD_PROVIDER} command
   create:  ${NOMAD_PROVIDER} create # Optional: a command to create the machine
   delete:  ${NOMAD_PROVIDER} delete # Optional: a command to delete the machine
   status:  ${NOMAD_PROVIDER} status # Optional: a command to get the machine's status
