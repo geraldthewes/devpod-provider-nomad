@@ -21,7 +21,7 @@ This project is still a work in progress, excuse our mess! <3
 From Github:
 
 ```shell
-devpod provider add briancain/devpod-provider-nomad
+devpod provider add geraldthewes/devpod-provider-nomad
 ```
 
 2. Use the provider
