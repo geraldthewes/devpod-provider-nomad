@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/briancain/devpod-provider-nomad/pkg/options"
@@ -76,14 +77,16 @@ func (n *Nomad) Status(
 	}
 
 	status := *job.Status
-	switch status {
-	case "pending":
+	// Convert to uppercase for consistent comparison
+	statusUpper := strings.ToUpper(status)
+	switch statusUpper {
+	case "PENDING":
 		return client.StatusBusy, job, nil
-	case "running":
+	case "RUNNING":
 		return client.StatusRunning, job, nil
-	case "complete":
+	case "COMPLETE":
 		return client.StatusStopped, job, nil
-	case "dead":
+	case "DEAD":
 		return client.StatusStopped, job, nil
 	case "":
 		return client.StatusNotFound, job, nil
