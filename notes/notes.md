@@ -450,3 +450,29 @@ Great question! No, the Ubuntu 22.04 base is NOT replaced - it serves as the "ma
   So Ubuntu 22.04 is the persistent host environment, and your actual development happens in the ephemeral devcontainer that runs inside it via
   Docker-in-Docker.
 
+Great! The provider has been rebuilt successfully. Now you need to delete your existing workspace and recreate it to test the fix:
+
+  devpod delete multistep-transcriber
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad
+
+  The network configuration I added should allow the container to access the Ubuntu package repositories and successfully install curl and git.
+
+  What I changed:
+  - Added a Networks configuration to the Nomad task group with bridge mode
+  - This gives the container proper network access to reach external services like archive.ubuntu.com and security.ubuntu.com
+
+  The bridge network mode is the standard way to provide internet connectivity to Docker containers in Nomad. If this doesn't work, your Nomad cluster might
+  have additional network restrictions that need to be configured at the cluster level (like CNI plugins or firewall rules).
+
+Built successfully! The fix now uses Docker's native bridge networking instead of Nomad's CNI-based networking. Now try again:
+
+  devpod delete multistep-transcriber
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad
+
+  What changed:
+  - Removed the Nomad TaskGroup-level Networks configuration (which requires CNI plugins)
+  - Added "network_mode": "bridge" to the Docker driver config instead
+  - This uses Docker's native bridge networking, which should be available on any Docker installation
+
+  This approach avoids the CNI plugin requirement and should allow your containers to access the internet for package installation.
+
