@@ -476,3 +476,37 @@ Built successfully! The fix now uses Docker's native bridge networking instead o
 
   This approach avoids the CNI plugin requirement and should allow your containers to access the internet for package installation.
 
+
+
+erfect! I've created manual-release.sh in your repository. Here's how to use it:
+
+  Usage
+
+  # For your existing release:
+  ./manual-release.sh v0.1.0
+
+  # For future releases:
+  ./manual-release.sh v0.2.0
+
+  The script will:
+  1. Validate the version format
+  2. Clean and rebuild all binaries (Linux, macOS, Windows for amd64 and arm64)
+  3. Generate SHA256 checksums
+  4. Create the provider.yaml file
+  5. Show you instructions for uploading
+
+  After building, upload with:
+
+  Option 1: GitHub CLI (easiest)
+  gh release upload v0.1.0 release/*
+
+  Option 2: Manual upload
+  - Go to your release page
+  - Click "Edit release"
+  - Drag and drop all files from the release/ directory
+  - Click "Update release"
+
+  Now you have both options:
+  - Enable GitHub Actions for automated releases
+  - Use manual-release.sh for manual releases whenever needed
+
