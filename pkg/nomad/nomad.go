@@ -2,17 +2,18 @@ package nomad
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/briancain/devpod-provider-nomad/pkg/options"
 	"github.com/hashicorp/nomad/api"
 	"github.com/loft-sh/devpod/pkg/client"
+	"github.com/loft-sh/log"
 	dockerterm "github.com/moby/term"
 )
 
@@ -98,6 +99,91 @@ func (n *Nomad) Status(
 	return client.StatusNotFound, job, nil
 }
 
+// waitForHealthyAllocation polls until a healthy, running allocation is found for the job
+func (n *Nomad) waitForHealthyAllocation(
+	ctx context.Context,
+	jobID string,
+	taskName string,
+	timeout time.Duration,
+) (*api.Allocation, error) {
+	logger := log.Default.ErrorStreamOnly()
+	logger.Infof("Waiting for healthy allocation for job %q...", jobID)
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return nil, fmt.Errorf("timeout waiting for healthy allocation for job %q", jobID)
+			}
+
+			// Get allocations for the job
+			allocs, _, err := n.client.Jobs().Allocations(jobID, false, nil)
+			if err != nil {
+				logger.Debugf("Error getting allocations: %v, retrying...", err)
+				continue
+			}
+
+			if len(allocs) == 0 {
+				logger.Debugf("No allocations found for job %q yet, waiting...", jobID)
+				continue
+			}
+
+			// Look for a running allocation with a running task
+			for _, allocStub := range allocs {
+				if allocStub.ClientStatus != "running" {
+					continue
+				}
+
+				// Get full allocation details to check task state
+				alloc, _, err := n.client.Allocations().Info(allocStub.ID, nil)
+				if err != nil {
+					logger.Debugf("Error getting allocation info: %v, retrying...", err)
+					continue
+				}
+
+				// Check if the specific task is running
+				if taskState, ok := alloc.TaskStates[taskName]; ok {
+					if taskState.State == "running" {
+						// Task is running, now check if it's ready (curl installed)
+						// Execute a command to check for the readiness marker
+						// Use strings.NewReader for stdin and io.Discard for stdout/stderr
+						exitCode, err := n.client.Allocations().Exec(
+							ctx,
+							alloc,
+							taskName,
+							false, // no TTY
+							[]string{"/bin/sh", "-c", "test -f /tmp/.devpod-ready"},
+							strings.NewReader(""), io.Discard, io.Discard,
+							nil, nil,
+						)
+						if err != nil {
+							logger.Debugf("Error checking readiness: %v, retrying...", err)
+							continue
+						}
+						if exitCode == 0 {
+							logger.Infof("Found healthy allocation %s with running task %q", alloc.ID[:8], taskName)
+							return alloc, nil
+						}
+						logger.Debugf("Task %q is running but not ready yet (curl still installing)...", taskName)
+					} else {
+						logger.Debugf("Task %q is in state %q, waiting for running state...", taskName, taskState.State)
+					}
+				} else {
+					logger.Debugf("Task %q not found in allocation, waiting...", taskName)
+				}
+			}
+
+			logger.Debugf("No healthy allocations found yet, retrying...")
+		}
+	}
+}
+
 // Run a command on the instance
 func (n *Nomad) CommandDevContainer(
 	ctx context.Context,
@@ -111,42 +197,15 @@ func (n *Nomad) CommandDevContainer(
 	ctx, cancelFn := context.WithCancel(ctx)
 	defer cancelFn()
 
-	// Check if the job is running
-	status, _, err := n.Status(ctx, jobID)
-	if err != nil {
-		return -1, err
-	}
-	if status != client.StatusRunning {
-		return -1, errors.New("job is not running")
-	}
-
-	// Get our allocation ID to exec into
-	allocs, _, err := n.client.Jobs().Allocations(jobID, false, nil)
-	if err != nil {
-		return -1, err
-	}
-	if len(allocs) == 0 {
-		return -1, fmt.Errorf("job %q has no allocations found", jobID)
-	}
-	// Check for running allocations
-	var allocID string
-	for _, alloc := range allocs {
-		if alloc.ClientStatus == "running" {
-			// Pick the first one
-			allocID = alloc.ID
-			break
-		}
-	}
-	if allocID == "" {
-		return -1, fmt.Errorf("job %q has no running allocations found", jobID)
-	}
-
-	alloc, _, err := n.client.Allocations().Info(allocID, nil)
-	if err != nil {
-		return -1, err
-	}
 	// TODO: make this an options
 	task := "devpod"
+
+	// Wait for a healthy allocation with the task running
+	// Give it up to 5 minutes to start (image pull, task startup, etc.)
+	alloc, err := n.waitForHealthyAllocation(ctx, jobID, task, 5*time.Minute)
+	if err != nil {
+		return -1, err
+	}
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 	go func() {

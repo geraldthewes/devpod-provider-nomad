@@ -11,7 +11,9 @@ import (
 )
 
 const (
-	defaultImage = "alpine"
+	// Use Ubuntu as default since DevPod's Docker installation script supports it
+	// and we need Docker CLI for devcontainer support
+	defaultImage = "ubuntu:22.04"
 	defaultUser  = "root"
 )
 
@@ -49,9 +51,14 @@ func (cmd *CreateCmd) Run(
 	// DevPod run option overrides for job
 	image := defaultImage
 	user := defaultUser
+	// Use a shared path that exists at the same location on both host and container
+	// This is critical for Docker-in-Docker bind mounts to work correctly
+	// Use a single shared directory for all DevPod workspaces
+	sharedWorkspacePath := "/tmp/devpod-workspaces"
 	env := map[string]string{}
 	entrypoint := ""
-	runCmd := []string{"sleep", "infinity"}
+	// Create shared workspace dir, install curl and git, create readiness marker, then sleep
+	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
@@ -60,7 +67,12 @@ func (cmd *CreateCmd) Run(
 			user = options.DriverOpts.User
 		}
 		if options.DriverOpts.Env != nil {
-			env = options.DriverOpts.Env
+			// Merge user env vars with our required env vars (ours take precedence)
+			for k, v := range options.DriverOpts.Env {
+				if _, exists := env[k]; !exists {
+					env[k] = v
+				}
+			}
 		}
 		if options.DriverOpts.Entrypoint != "" {
 			entrypoint = options.DriverOpts.Entrypoint
@@ -101,6 +113,15 @@ func (cmd *CreateCmd) Run(
 						Config: map[string]interface{}{
 							"image": image,
 							"args":  runCmd,
+							// Mount Docker socket from host for Docker-in-Docker support
+							// Mount workspace directory at the SAME path on host and container
+							// This is critical: when DevPod tells Docker to bind mount paths,
+							// Docker needs to find them on the host at the same path
+							"volumes": []string{
+								"/var/run/docker.sock:/var/run/docker.sock",
+								sharedWorkspacePath + ":" + sharedWorkspacePath,
+							},
+							"privileged": true,
 						},
 						Resources: jobResources,
 						Driver:    "docker",
