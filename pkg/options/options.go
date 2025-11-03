@@ -58,7 +58,7 @@ func DefaultOptions() (*Options, error) {
 		TaskName:   "devpod",
 		CPU:        getEnv("NOMAD_CPU", defaultCpu),
 		MemoryMB:   getEnv("NOMAD_MEMORYMB", defaultMemoryMB),
-		JobId:      getEnv("DEVCONTAINER_ID", "devpod-nomad"), // set by devpod
+		JobId:      getEnv("DEVCONTAINER_ID", "devpod"), // set by devpod
 		DriverOpts: runOptions,
 	}, nil
 }
