@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -45,7 +46,18 @@ func main() {
 
 	if buildVersion == "dev" {
 		replaced = strings.Replace(replaced, "##PROJECT_ROOT##", projectRoot, -1)
+		
+		// Determine the platform-specific binary path
+		// For dev builds, we'll use the absolute path to the binary
+		// This ensures the exec section has a full path to the binary
+		binaryPath := "./release/devpod-provider-nomad-linux-amd64"
+		absBinaryPath, err := filepath.Abs(binaryPath)
+		if err != nil {
+			panic(fmt.Errorf("failed to get absolute path for binary: %v", err))
+		}
+		replaced = strings.Replace(replaced, "${NOMAD_PROVIDER}", absBinaryPath, -1)
 	}
+
 
 	for k, v := range checksumMap {
 		checksum, err := File(k)
