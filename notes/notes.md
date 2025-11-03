@@ -343,3 +343,110 @@ Publishing a Release
 
   That's it! Once you publish the release, GitHub Actions will automatically build and attach the binaries within a few minutes.
 
+To SSH into a DevPod container, you typically use the DevPod CLI directly:
+
+  Standard Method
+
+  devpod ssh vscode-remote-try-node
+
+  This is the recommended way - DevPod handles all the SSH connection details for you automatically.
+
+  Finding Connection Details Manually
+
+  If you need the actual IP and port for direct SSH access:
+
+  # Get workspace status and details
+  devpod status vscode-remote-try-node
+
+  # List workspaces with details
+  devpod list
+
+  # Get SSH config that DevPod uses
+  devpod ssh vscode-remote-try-node --command "echo \$SSH_CONNECTION"
+
+  For Nomad Provider Specifically
+
+  Since you're using the Nomad provider, the container is running as a Nomad job. You can also:
+
+  # Find the Nomad allocation
+  nomad job status devpod-vscode-remote-try-node
+
+  # Get allocation details (this will show the actual node and ports)
+  nomad alloc status <allocation-id>
+
+  # Check port mappings
+  nomad alloc status <allocation-id> | grep -A 10 "Port"
+
+  The SSH port is typically exposed through Nomad's dynamic port allocation. DevPod's Nomad provider should handle this mapping automatically.
+
+  Direct SSH (if needed)
+
+  If you really need to SSH directly:
+  1. The IP would be the Nomad client node's IP where the allocation is running
+  2. The port would be the dynamically allocated port mapped to the container's SSH port (usually 22)
+
+  But again, devpod ssh <workspace-name> is the intended way - it abstracts away all these details and handles authentication automatically.
+
+  Would you like me to help you find the specific connection details for your running workspace?
+
+ Based on the notes, I can see that Ubuntu 22.04 LTS was chosen when switching from Alpine specifically because "which is supported by DevPod's Docker
+  installation script" (notes/notes.md:95).
+
+  The choice of 22.04 over 24.04 likely came down to these factors:
+
+  1. Maturity and stability: Ubuntu 22.04 LTS (released April 2022) is more mature and battle-tested than 24.04 LTS (released April 2024), with ~2 years more
+  time to work out bugs and edge cases
+  2. DevPod compatibility: DevPod's installation scripts and tooling are likely tested and verified against 22.04. The 22.04 base ensures broader compatibility
+   with DevPod's agent and tooling
+  3. Docker support: Docker packages and socket integration are well-established on 22.04, whereas 24.04 may have different package versions or configurations
+  4. Conservative approach: When fixing critical issues, it made sense to use a known-stable base rather than introducing potential new issues with a newer OS
+  version
+
+  That said, Ubuntu 24.04 LTS would likely work fine for this use case. If you'd like to test it or switch to it, the change would be simple:
+
+  // In cmd/create.go:16
+  defaultImage = "ubuntu:24.04"
+
+  Would you like me to update it to Ubuntu 24.04 LTS, or test whether 24.04 works properly with the current provider implementation?
+
+Great question! No, the Ubuntu 22.04 base is NOT replaced - it serves as the "machine" that hosts the devcontainer. Here's the architecture:
+
+  The Architecture
+
+  Nomad Job (Ubuntu 22.04 base container)
+  ├── DevPod agent runs here
+  ├── Docker CLI runs here (via mounted socket from host)
+  ├── curl, git, and other tools installed here
+  └── Workspace directory (/tmp/devpod-workspaces)
+      └── Devcontainer runs INSIDE via Docker-in-Docker
+
+  What the Ubuntu 22.04 Base Does
+
+  Looking at cmd/create.go:114-124, the base container:
+
+  1. Stays running persistently (sleep infinity at cmd/create.go:61)
+  2. Hosts the DevPod agent - the agent binary runs in this container
+  3. Provides Docker access - mounts /var/run/docker.sock from the Nomad host (line 121)
+  4. Has essential tools - curl and git are pre-installed (line 61)
+  5. Provides workspace storage - /tmp/devpod-workspaces shared with host (line 122)
+
+  What Happens When You Run a Devcontainer
+
+  When you do devpod up github.com/microsoft/vscode-remote-try-node:
+
+  1. DevPod agent (running in Ubuntu 22.04 base) clones the repo
+  2. DevPod agent reads the .devcontainer/devcontainer.json
+  3. DevPod agent uses the Docker CLI (connected via socket) to build/run the devcontainer image
+  4. The devcontainer runs as a separate Docker container alongside the Ubuntu base
+  5. VS Code connects to the devcontainer (not the Ubuntu base)
+
+  Why This Design?
+
+  This is similar to how DevPod's "docker" provider works - you need a stable "machine" container that:
+  - Doesn't get torn down between workspace sessions
+  - Can orchestrate Docker operations
+  - Provides a consistent environment for the DevPod agent
+
+  So Ubuntu 22.04 is the persistent host environment, and your actual development happens in the ephemeral devcontainer that runs inside it via
+  Docker-in-Docker.
+
