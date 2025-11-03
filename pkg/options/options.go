@@ -50,9 +50,6 @@ func DefaultOptions() (*Options, error) {
 		}
 	}
 
-	// Set default NOMAD_PROVIDER if not set
-	nomadProvider := getEnv("NOMAD_PROVIDER", "nomad")
-	
 	return &Options{
 		DiskSize:   "10G",
 		Token:      "",
