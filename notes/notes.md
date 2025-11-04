@@ -510,3 +510,153 @@ erfect! I've created manual-release.sh in your repository. Here's how to use it:
   - Enable GitHub Actions for automated releases
   - Use manual-release.sh for manual releases whenever needed
 
+Now I understand the setup! DevPod for the Nomad provider doesn't expose SSH via traditional host:port - instead it uses ProxyCommand to tunnel through nomad
+   alloc exec.
+
+  Here's how to connect with Emacs TRAMP:
+
+  For Emacs TRAMP
+
+  Use this connection string in Emacs:
+
+  /ssh:multistep-transcriber.devpod:/path/to/file
+
+  Or if you need to specify the user explicitly:
+
+  /ssh:vscode@multistep-transcriber.devpod:/path/to/file
+
+  How This Works
+
+  Looking at your SSH config at ~/.ssh/config, DevPod created this entry:
+
+  Host multistep-transcriber.devpod
+    ProxyCommand "/home/gerald/.local/bin/devpod" ssh --stdio --context default --user vscode multistep-transcriber
+    User vscode
+
+  The ProxyCommand tells SSH to use devpod ssh --stdio as a tunnel, which in turn uses nomad alloc exec to connect to the container. TRAMP will automatically
+  use this SSH config entry.
+
+  Testing
+
+  Try this in Emacs:
+
+  1. Open a file: C-x C-f /ssh:multistep-transcriber.devpod:/tmp/test.txt
+  2. Or open dired: C-x d /ssh:multistep-transcriber.devpod:/workspace/
+
+  Alternative: If you need a direct connection
+
+  If TRAMP doesn't work with ProxyCommand (some older versions have issues), you could instead:
+
+  1. Start an SSH tunnel manually:
+  ssh -N -L 2222:localhost:22 multistep-transcriber.devpod
+  2. Then connect via localhost in TRAMP:
+  /ssh:vscode@localhost#2222:/path/to/file
+
+  Does the first method (/ssh:multistep-transcriber.devpod:) work for you in Emacs?
+
+
+  1. Configuring Nomad Resources
+
+  Resources are configured via provider options in hack/provider/provider.yaml:21-26. You can set:
+
+  - NOMAD_CPU: CPU in MHz (default: "200")
+  - NOMAD_MEMORYMB: Memory in MB (default: "512")
+
+  You can configure these when setting up the provider:
+
+  devpod provider set-options nomad \
+    --option NOMAD_CPU=1000 \
+    --option NOMAD_MEMORYMB=2048
+
+  Or set them as environment variables before running devpod up:
+  export NOMAD_CPU=1000
+  export NOMAD_MEMORYMB=2048
+  devpod up ...
+
+  The defaults you're seeing (200 MHz CPU, 512 MiB Memory) match what's defined in pkg/options/options.go:28-29.
+
+  2. Multiple Devcontainers
+
+  No, each devcontainer runs in its own separate Nomad allocation.
+
+  In cmd/create.go:101, each devcontainer gets its own unique Job ID (from the DEVCONTAINER_ID environment variable). So if you create multiple devcontainers,
+  you'll see multiple Nomad jobs/allocations, each with their own resource reservations.
+
+  For example, 3 devcontainers = 3 Nomad jobs = 3 separate allocations (each reserving their own CPU/memory/disk).
+
+
+Perfect! I've implemented disk resource configuration support. Here's what I changed:
+
+  Changes Made:
+
+  1. hack/provider/provider.yaml:27-29 - Added NOMAD_DISKMB option with default of "300" MB
+  2. hack/provider/provider-dev.yaml:27-29 - Added NOMAD_DISKMB option to dev provider
+  3. pkg/options/options.go:13 - Renamed DiskSize to DiskMB
+  4. pkg/options/options.go:30 - Added defaultDiskMB constant
+  5. pkg/options/options.go:55 - Now reads NOMAD_DISKMB from environment
+  6. cmd/create.go:93-96 - Parse disk MB from options
+  7. cmd/create.go:112-114 - Set EphemeralDisk on the TaskGroup
+
+  Now you can rebuild and test:
+
+  # Rebuild the provider
+  RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+
+  # Delete existing workspace and provider
+  devpod delete 'multistep-transcriber'
+  devpod provider delete nomad
+
+  # Use with custom disk size
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \
+    --option NOMAD_CPU=2000 \
+    --option NOMAD_MEMORYMB=8192 \
+    --option NOMAD_DISKMB=1024
+
+  Or set as defaults:
+
+  devpod provider set-options nomad \
+    --option NOMAD_CPU=2000 \
+    --option NOMAD_MEMORYMB=8192 \
+    --option NOMAD_DISKMB=1024
+
+  Then verify with nomad alloc status - you should see your configured disk size!
+
+
+Add Disk Resource Configuration Support
+========================================
+
+Added support for configuring ephemeral disk resources for Nomad workspaces.
+
+Problem
+-------
+The provider previously had a DiskSize field in options but it was never used when creating Nomad jobs.
+Disk was always set to Nomad's default (300 MiB) regardless of user configuration.
+
+Solution
+--------
+1. Added NOMAD_DISKMB provider option (default: "300")
+2. Updated Options struct to use DiskMB instead of DiskSize
+3. Parse disk value and configure EphemeralDisk on TaskGroup
+4. Updated README.md with resource configuration documentation
+
+Files Changed
+-------------
+- hack/provider/provider.yaml - Added NOMAD_DISKMB option
+- hack/provider/provider-dev.yaml - Added NOMAD_DISKMB option
+- pkg/options/options.go - Changed DiskSize to DiskMB, read from NOMAD_DISKMB env var
+- cmd/create.go - Parse DiskMB and set EphemeralDisk.SizeMB on TaskGroup
+- README.md - Added documentation for setting resource options
+
+Usage
+-----
+Set disk when creating workspace:
+  devpod up <repo> --provider nomad --option NOMAD_DISKMB=1024
+
+Or set as persistent default:
+  devpod provider set-options nomad --option NOMAD_DISKMB=1024
+
+Key Insight
+-----------
+In Nomad, disk is configured on the TaskGroup via EphemeralDisk.SizeMB, not in the Task's Resources.
+This is different from CPU and Memory which are set on the Task's Resources.
+

@@ -10,7 +10,7 @@ import (
 
 type Options struct {
 	// Resources
-	DiskSize string
+	DiskMB   string
 	CPU      string
 	MemoryMB string
 
@@ -27,6 +27,7 @@ type Options struct {
 const (
 	defaultCpu      = "200"
 	defaultMemoryMB = "512"
+	defaultDiskMB   = "300"
 )
 
 // Read ENV Vars for option overrides
@@ -51,7 +52,7 @@ func DefaultOptions() (*Options, error) {
 	}
 
 	return &Options{
-		DiskSize:   "10G",
+		DiskMB:     getEnv("NOMAD_DISKMB", defaultDiskMB),
 		Token:      "",
 		Namespace:  getEnv("NOMAD_NAMESPACE", ""),
 		Region:     getEnv("NOMAD_REGION", ""),

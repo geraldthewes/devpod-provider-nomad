@@ -32,7 +32,7 @@ devpod up <repository-url> --provider nomad
 
 ### Provider Configurations
 
-Set this options through DevPod to configure them when DevPod launches the
+Set these options through DevPod to configure them when DevPod launches the
 Nomad job during a workspace creation.
 
 - NOMAD_NAMESPACE:
@@ -47,6 +47,35 @@ Nomad job during a workspace creation.
 - NOMAD_MEMORYMB:
   + description: The memory in mb to use for the Nomad Job
   + default: "512"
+- NOMAD_DISKMB:
+  + description: The ephemeral disk in mb to use for the Nomad Job
+  + default: "300"
+
+#### Setting Resource Options
+
+You can configure resources when starting a workspace using `--option` flags:
+
+```shell
+devpod up <repository-url> --provider nomad \
+  --option NOMAD_CPU=2000 \
+  --option NOMAD_MEMORYMB=8192 \
+  --option NOMAD_DISKMB=1024
+```
+
+Or set them as persistent defaults for all workspaces:
+
+```shell
+devpod provider set-options nomad \
+  --option NOMAD_CPU=2000 \
+  --option NOMAD_MEMORYMB=8192 \
+  --option NOMAD_DISKMB=1024
+```
+
+Verify your configuration:
+
+```shell
+devpod provider options nomad
+```
 
 ## Testing Locally
 

@@ -90,6 +90,10 @@ func (cmd *CreateCmd) Run(
 	if err != nil {
 		return err
 	}
+	disk, err := strconv.Atoi(options.DiskMB)
+	if err != nil {
+		return err
+	}
 
 	jobResources := &api.Resources{
 		CPU:      &cpu,
@@ -105,6 +109,9 @@ func (cmd *CreateCmd) Run(
 		TaskGroups: []*api.TaskGroup{
 			{
 				Name: &jobName,
+				EphemeralDisk: &api.EphemeralDisk{
+					SizeMB: &disk,
+				},
 				Tasks: []*api.Task{
 					{
 						Name: options.TaskName,
