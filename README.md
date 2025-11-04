@@ -53,13 +53,13 @@ Nomad job during a workspace creation.
 
 #### Setting Resource Options
 
-You can configure resources when starting a workspace using `--option` flags:
+You can configure resources when starting a workspace using `--provider-option` flags:
 
 ```shell
 devpod up <repository-url> --provider nomad \
-  --option NOMAD_CPU=2000 \
-  --option NOMAD_MEMORYMB=8192 \
-  --option NOMAD_DISKMB=1024
+  --provider-option NOMAD_CPU=2000 \
+  --provider-option NOMAD_MEMORYMB=8192 \
+  --provider-option NOMAD_DISKMB=1024
 ```
 
 Or set them as persistent defaults for all workspaces:
