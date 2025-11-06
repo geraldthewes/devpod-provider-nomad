@@ -239,6 +239,107 @@ echo $OLLAMA_HOST
 - DevPod only has access to environment variables that exist when `devpod up` runs
 - Make sure variables are exported in your shell profile and you've restarted your terminal
 
+## Using Private Docker Registries
+
+The provider supports using private Docker registries with custom TLS certificates. This is useful when working with self-hosted registries or registries with self-signed certificates.
+
+### How It Works
+
+The provider automatically mounts certificates from the Nomad client hosts into the DevPod containers:
+
+- `/etc/docker/certs.d/<registry>/ca.crt` - Docker registry certificates (mounted read-only)
+- `/usr/local/share/ca-certificates/registry.cluster.crt` - CA certificate source file (mounted read-only)
+
+**Why two mounts?**
+- The Docker daemon on the Nomad client uses `/etc/docker/certs.d/` when pulling images
+- DevPod makes direct API calls to the registry to inspect images and needs the CA cert in its trust store
+- When the container starts, `update-ca-certificates` runs and includes the mounted certificate in the container's CA bundle at `/etc/ssl/certs/ca-certificates.crt`
+
+### Setting Up Registry Certificates
+
+**Step 1:** Place your registry's CA certificate on **each Nomad client node** that will run DevPod workspaces.
+
+The certificate must be placed in two locations:
+
+1. Docker registry certificate directory (for Docker daemon):
+```bash
+# On each Nomad client node (example for registry.cluster:5000)
+sudo mkdir -p /etc/docker/certs.d/registry.cluster:5000
+sudo cp /path/to/ca.crt /etc/docker/certs.d/registry.cluster:5000/ca.crt
+sudo chmod 644 /etc/docker/certs.d/registry.cluster:5000/ca.crt
+```
+
+2. System CA certificates directory (for DevPod API calls):
+```bash
+# On each Nomad client node
+# IMPORTANT: The filename must be exactly "registry.cluster.crt"
+sudo cp /path/to/ca.crt /usr/local/share/ca-certificates/registry.cluster.crt
+sudo chmod 644 /usr/local/share/ca-certificates/registry.cluster.crt
+sudo update-ca-certificates
+```
+
+**Note:** The filename `registry.cluster.crt` is hardcoded in the provider and must match exactly.
+
+**Step 2:** Restart the Docker daemon on each Nomad client:
+```bash
+sudo systemctl restart docker
+```
+
+**Step 3:** Use your private registry in your devcontainer.json:
+```json
+{
+  "name": "My Project",
+  "image": "registry.cluster:5000/my-devcontainer:latest",
+  "remoteUser": "vscode"
+}
+```
+
+### Example Configuration
+
+For a local registry with a self-signed certificate:
+
+```json
+{
+  "name": "Python Development",
+  "image": "registry.cluster:5000/devcontainer-python:latest",
+  "remoteUser": "vscode",
+  "postCreateCommand": "./setup.sh",
+  "remoteEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}"
+  }
+}
+```
+
+Launch with:
+```bash
+devpod up github.com/your-org/your-project --provider nomad \
+  --provider-option NOMAD_CPU=2000 \
+  --provider-option NOMAD_MEMORYMB=8192
+```
+
+### Troubleshooting Registry Certificate Issues
+
+**Error: "x509: certificate signed by unknown authority"**
+
+This means the Docker daemon on the Nomad client cannot verify your registry's certificate.
+
+Solutions:
+1. ✅ Verify the certificate is at the correct path on **all Nomad client nodes**
+2. ✅ Check the certificate filename is exactly `ca.crt` (not `ca.cert` or other variations)
+3. ✅ Ensure the registry address in the path matches exactly (including port): `/etc/docker/certs.d/registry.cluster:5000/`
+4. ✅ Restart the Docker daemon after adding certificates: `sudo systemctl restart docker`
+5. ✅ Test Docker can pull from the registry directly on the Nomad client:
+   ```bash
+   # On the Nomad client
+   docker pull registry.cluster:5000/your-image:tag
+   ```
+
+**Error: "Get https://registry.cluster:5000/v2/: dial tcp: lookup registry.cluster"**
+
+This is a DNS issue, not a certificate issue:
+- Ensure `registry.cluster` resolves correctly on the Nomad client nodes
+- Add an entry to `/etc/hosts` if needed: `10.0.1.12 registry.cluster`
+
 ## Testing Locally
 
 1. Build the provider locally

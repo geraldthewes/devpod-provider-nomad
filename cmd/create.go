@@ -57,8 +57,8 @@ func (cmd *CreateCmd) Run(
 	sharedWorkspacePath := "/tmp/devpod-workspaces"
 	env := map[string]string{}
 	entrypoint := ""
-	// Create shared workspace dir, install curl and git, create readiness marker, then sleep
-	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
+	// Create shared workspace dir, install curl and git, update CA certificates, create readiness marker, then sleep
+	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
@@ -124,9 +124,13 @@ func (cmd *CreateCmd) Run(
 							// Mount workspace directory at the SAME path on host and container
 							// This is critical: when DevPod tells Docker to bind mount paths,
 							// Docker needs to find them on the host at the same path
+							// Mount Docker registry certificates for Docker daemon
+							// Mount CA certificate source file so update-ca-certificates includes it
 							"volumes": []string{
 								"/var/run/docker.sock:/var/run/docker.sock",
 								sharedWorkspacePath + ":" + sharedWorkspacePath,
+								"/etc/docker/certs.d:/etc/docker/certs.d:ro",
+								"/usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro",
 							},
 							"privileged":   true,
 							"network_mode": "bridge",
