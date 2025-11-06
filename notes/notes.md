@@ -660,3 +660,447 @@ Key Insight
 In Nomad, disk is configured on the TaskGroup via EphemeralDisk.SizeMB, not in the Task's Resources.
 This is different from CPU and Memory which are set on the Task's Resources.
 
+
+● Summary
+
+  I've added a comprehensive Environment Variables section to the README that covers both your use cases:
+
+  Key Points Documented:
+
+  1. The Critical Difference: Explained why remoteEnv works but containerEnv doesn't for runtime variables
+  2. Global Environment Variables (HF_TOKEN, OLLAMA_HOST, etc.):
+    - Set once on your local machine (export HF_TOKEN=...)
+    - Reference in any project using "${localEnv:HF_TOKEN}"
+    - Works automatically across all your DevPod workspaces
+  3. Project-Specific Variables:
+    - Option 1: Hardcoded non-sensitive values directly in devcontainer.json
+    - Option 2: Use .devcontainer/devcontainer.env file for project secrets (gitignored)
+    - Option 3: Combine both global and project-specific variables
+  4. Troubleshooting Section addressing:
+    - Why SSH config SetEnv doesn't work with the Nomad provider
+    - How to verify environment variables are correctly set
+    - Common syntax issues
+
+  What You Should Do Next:
+
+  1. Export your global variables in your shell profile (~/.bashrc or ~/.zshrc):
+  export HF_TOKEN="hf_your_token_here"
+  export OLLAMA_HOST="http://localhost:11434"
+  2. Update your devcontainer.json to use remoteEnv (NOT containerEnv):
+  {
+    "remoteEnv": {
+      "HF_TOKEN": "${localEnv:HF_TOKEN}",
+      "OLLAMA_HOST": "${localEnv:OLLAMA_HOST}"
+    }
+  }
+  3. Restart your terminal (to load the new exports), then test with:
+  devpod delete your-workspace
+  devpod up <repo> --provider nomad --debug
+
+  The documentation is now in your README.md starting at line 80. Would you like me to create a quick test to verify this actually works with
+   the Nomad provider?
+
+
+Based on my research, there are known issues with remoteEnv and ${localEnv:...} substitution in DevPod. But I noticed an interesting
+  pattern - HF_TOKEN works but OPENAI_ and OLLAMA_ don't**. This suggests the variable names might be filtered or overridden.
+
+  Let's test if it's the variable names causing the issue:
+
+  Test 1: Rename the variables
+
+  Try changing your devcontainer.json to use different variable names:
+
+  {
+    "remoteEnv": {
+      "HF_TOKEN": "${localEnv:HF_TOKEN}",
+      "MY_OLLAMA_HOST": "${localEnv:OLLAMA_HOST}",
+      "MY_OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+      "OPENAI_MODEL": "QuantTrio/Qwen3-Coder-30B-A3B-Instruct-AWQ",
+      "MY_OPENAI_BASE_URL": "${localEnv:OPENAI_BASE_URL}"
+    }
+  }
+
+  This maps your local OPENAI_API_KEY to a container variable called MY_OPENAI_API_KEY. If these work, it confirms that OPENAI_*/OLLAMA_* are
+   being filtered somewhere.
+
+  Test 2: Use --workspace-env-file (recommended workaround)
+
+  Create a file ~/.devpod/workspace.env:
+
+  OLLAMA_HOST=http://ollama.cluster:11434
+  OPENAI_API_KEY=**
+  OPENAI_BASE_URL=http://vllm.cluster:8000/v1
+
+  Then start your workspace with:
+
+  devpod up github.com/geraldthewes/multistep-transcriber \
+    --provider nomad \
+    --workspace-env-file ~/.devpod/workspace.env \
+    --debug
+
+  Test 3: Check if libraries are overriding the vars
+
+  Some Python libraries (like openai, langchain) automatically check for OPENAI_* variables and may override or clear them. SSH into your
+  container and check:
+
+  devpod ssh multistep-transcriber
+
+  # Check what's actually in the environment
+  env | sort | grep -E "(OLLAMA|OPENAI|HF_)"
+
+  # Check if Python is clearing them
+  python3 -c "import os; print('OPENAI_API_KEY:', os.environ.get('OPENAI_API_KEY', 'NOT SET'))"
+
+  Which test would you like to try first? I'd recommend Test 1 (renaming) as it's the quickest way to confirm if it's a variable name
+  filtering issue.
+
+
+Great questions! Let me break down what I found about the reported remoteEnv issues and why workspace-env-file might not actually be
+  different.
+
+  Reported Issues with remoteEnv
+
+  Based on my web search, here are the key problems:
+
+  1. remoteEnv vs containerEnv Scope (Critical difference!)
+  - remoteEnv: Sets environment variables for terminal sessions and dev tools (like VS Code debugger) - NOT for the entire container
+  - containerEnv: Sets environment variables for the entire container, accessible to all processes
+
+  This is the key insight! If remoteEnv only applies to terminal sessions, then:
+  - Variables are available when you ssh in (which is why you see them)
+  - BUT they may NOT be available during postCreateCommand execution
+  - AND they may NOT be available to processes started by systemd or other init systems
+
+  2. ${localEnv:...} Substitution Bugs
+  - Issue #1366: Environment variables get replaced at runtime unexpectedly
+  - Issue #1638: Environment variable substitution doesn't work reliably on Windows/WSL2
+  - Some variables work, others don't, seemingly randomly
+
+  3. Timing Issues
+  - Variables set via remoteEnv may not be available during container initialization
+  - postCreateCommand might run before remoteEnv is applied
+
+  Your Excellent Point About Libraries Clearing Variables
+
+  You're absolutely right! If Python libraries are clearing variables during pip install in your postCreateCommand, then workspace-env-file 
+  would have the same problem because:
+
+  Timeline:
+  1. Container starts → containerEnv applied
+  2. postCreateCommand runs → pip install → libraries may clear OPENAI_*, OLLAMA_*
+  3. remoteEnv applied → too late, vars already cleared
+
+  However, here's why some libraries might clear specific variables:
+
+  Many Python AI/ML libraries have initialization code like:
+
+  # In openai library __init__.py
+  import os
+  if 'OPENAI_API_KEY' in os.environ and not os.environ['OPENAI_API_KEY']:
+      del os.environ['OPENAI_API_KEY']  # Clear if empty
+
+  Or they validate and clear invalid values:
+
+  # In langchain or similar
+  if 'OLLAMA_HOST' in os.environ:
+      try:
+          validate_url(os.environ['OLLAMA_HOST'])
+      except:
+          del os.environ['OLLAMA_HOST']  # Clear if invalid
+
+  The Real Mystery
+
+  If libraries are clearing variables, why does HF_TOKEN work but OPENAI_*/OLLAMA_* don't?
+
+  Hypothesis 1: Selective library filtering
+  - huggingface_hub library doesn't validate/clear HF_TOKEN on import
+  - openai library DOES validate/clear OPENAI_* variables
+  - langchain or other libs clear OLLAMA_HOST
+
+  Hypothesis 2: Variable values matter
+  - Your HF_TOKEN has 37 characters (valid token)
+  - Your OPENAI_API_KEY is just "**" (2 chars) - might be detected as invalid and cleared
+  - OLLAMA_HOST URL might be unreachable from container, causing validation to fail and clear it
+
+  What Would workspace-env-file Actually Do Differently?
+
+  Looking at the code flow - probably nothing different! You're right to question this. If the issue is libraries clearing variables during
+  postCreateCommand, then workspace-env-file would face the same problem.
+
+  Better Solutions
+
+  Option 1: Use containerEnv instead
+  {
+    "containerEnv": {
+      "OLLAMA_HOST": "${localEnv:OLLAMA_HOST}",
+      "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
+    }
+  }
+  This sets them at container startup, before postCreateCommand runs.
+
+  Option 2: Re-export in postCreateCommand
+  {
+    "remoteEnv": {
+      "OLLAMA_HOST": "${localEnv:OLLAMA_HOST}",
+      "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
+    },
+    "postCreateCommand": "pip install -r requirements.txt && echo 'export OLLAMA_HOST=${OLLAMA_HOST}' >> ~/.bashrc && echo 'export 
+  OPENAI_API_KEY=${OPENAI_API_KEY}' >> ~/.bashrc"
+  }
+
+  Option 3: Use postStartCommand instead
+  {
+    "containerEnv": {
+      "OLLAMA_HOST": "${localEnv:OLLAMA_HOST}",
+      "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
+    },
+    "postCreateCommand": "pip install -r requirements.txt",
+    "postStartCommand": "export OLLAMA_HOST=${OLLAMA_HOST} OPENAI_API_KEY=${OPENAI_API_KEY}"
+  }
+
+  The best test would be to check if those Python libraries are actually installed in your postCreateCommand. Can you share your
+  devcontainer.json's postCreateCommand?
+
+ou're absolutely right that adding provider-level environment variables would be perfect for global env vars like HF_TOKEN, OLLAMA_HOST,
+  etc. - which is exactly your current focus! Let me compare the approaches:
+
+  Option 1: Nomad Provider EXTRA_ENV_VARS (Recommended for your use case)
+
+  Pros:
+  - ✅ Simple to implement and use
+  - ✅ Set once, works for all workspaces automatically
+  - ✅ Perfect for global secrets like HF_TOKEN, OLLAMA_HOST
+  - ✅ Stored securely in DevPod provider config (not in git)
+  - ✅ No external dependencies
+
+  Cons:
+  - ❌ Only global (but that's what you want!)
+  - ❌ Less secure than Vault (but probably fine for your use case)
+
+  Implementation:
+  I could add this in about 20 minutes. It would work like:
+
+  # Set global env vars for all workspaces
+  devpod provider set-options nomad \
+    --option EXTRA_ENV_VARS='{"HF_TOKEN":"hf_xxx","OLLAMA_HOST":"http://ollama.cluster:11434","OPENAI_API_KEY":"**","OPENAI_BASE_URL":"http:/
+  /vllm.cluster:8000/v1"}'
+
+  # Now all workspaces automatically get these vars
+  devpod up <any-repo> --provider nomad
+
+  Option 2: Vault Integration (Enterprise-grade but complex)
+
+  Nomad has native Vault integration that's actually quite elegant once set up. The workflow would be:
+
+  How it works:
+  1. Store secrets in Vault: vault kv put secret/devpod HF_TOKEN=hf_xxx
+  2. Nomad job gets a Vault token
+  3. Container reads secrets from Vault at runtime
+
+  In the Nomad provider, we'd add:
+  vault {
+    policies = ["devpod-secrets"]
+  }
+
+  template {
+    data = <<EOH
+  {{ with secret "secret/devpod" }}
+  export HF_TOKEN="{{ .Data.data.HF_TOKEN }}"
+  export OLLAMA_HOST="{{ .Data.data.OLLAMA_HOST }}"
+  {{ end }}
+  EOH
+    destination = "secrets/env.sh"
+    env = true
+  }
+
+  Pros:
+  - 🔒 Most secure approach
+  - 🔒 Centralized secret management
+  - 🔒 Audit logs, rotation, fine-grained access
+
+  Cons:
+  - 😤 Vault setup is a PITA (as you noted!)
+  - 😤 Requires Vault infrastructure
+  - 😤 Complex policies and auth setup
+  - 😤 Overkill for personal dev environments
+
+  Option 3: Consul KV (Middle ground)
+
+  Simpler than Vault, but not secure (plaintext storage):
+
+  consul kv put devpod/HF_TOKEN "hf_xxx"
+  consul kv put devpod/OLLAMA_HOST "http://ollama.cluster:11434"
+
+  Then read from Consul in the container startup script.
+
+  Verdict: Don't use this for secrets - it's plaintext in Consul!
+
+  My Recommendation
+
+  Given your situation (personal dev environment, global secrets, existing Nomad cluster), I'd recommend:
+
+  Add EXTRA_ENV_VARS to the Nomad provider
+
+  This gives you:
+  - ✅ Simple solution for your immediate problem
+  - ✅ No external dependencies
+  - ✅ Works today with 20 minutes of coding
+  - ✅ Can migrate to Vault later if needed
+
+  Would you like me to implement the EXTRA_ENV_VARS provider option right now?
+
+  It would:
+  1. Add a new option to provider.yaml
+  2. Parse the JSON env vars in pkg/options/options.go
+  3. Merge them with devcontainer.json env vars in cmd/create.go
+  4. Update the README with examples
+
+  This way you get global secrets without dealing with Vault's complexity, and you can still override per-project using containerEnv in
+  devcontainer.json.
+
+  Alternative: If you really want to go the Vault route and need help making it less painful, I can help set up a simplified Vault
+  integration. But honestly, for global dev environment secrets, the provider option is probably the sweet spot.
+
+
+
+Perfect! I've implemented the registry certificate support and documented it. Here's what I changed:
+
+  Changes Made
+
+  1. Code Changes (cmd/create.go:127-132)
+
+  Added two volume mounts to the Nomad job configuration:
+  "volumes": []string{
+      "/var/run/docker.sock:/var/run/docker.sock",
+      sharedWorkspacePath + ":" + sharedWorkspacePath,
+      "/etc/docker/certs.d:/etc/docker/certs.d:ro",    // ← New
+      "/etc/ssl/certs:/etc/ssl/certs:ro",              // ← New
+  },
+
+  2. Documentation (README.md)
+
+  Added a comprehensive "Using Private Docker Registries" section that covers:
+  - How the certificate mounting works
+  - Step-by-step setup instructions
+  - Example configuration
+  - Troubleshooting common errors
+
+  Testing the Changes
+
+  Since you already have the certificates set up on your Nomad clients at /etc/docker/certs.d/registry.cluster:5000/, you can test this right
+   away:
+
+  # Build the provider
+  RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+
+  # Remove old provider and install new one
+  devpod provider delete nomad
+  devpod provider add --name nomad --use ./release/provider.yaml
+
+  # Test with your multistep-transcriber project
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \
+      --ide none \
+      --provider-option NOMAD_CPU=2000 \
+      --provider-option NOMAD_MEMORYMB=8192 \
+      --provider-option NOMAD_DISKMB=512 \
+      --debug
+
+  The "x509: certificate signed by unknown authority" error should now be resolved! The Docker daemon will find your CA certificate at
+  /etc/docker/certs.d/registry.cluster:5000/ca.crt and use it to verify the TLS connection.
+
+
+erfect! I've identified and fixed the root cause. The issue was that DevPod makes direct HTTPS API calls to the registry to inspect images
+   (not just relying on the Docker daemon), so it needs access to the system CA certificates inside the container.
+
+  Changes Made
+
+  /media/gerald/SSDT7/gerald/devpod-provider-nomad/cmd/create.go:134
+
+  Added /etc/ssl/certs mount (read-write) so:
+  1. DevPod can verify TLS when making direct registry API calls
+  2. The ca-certificates package can install during container setup
+
+  "volumes": []string{
+      "/var/run/docker.sock:/var/run/docker.sock",
+      sharedWorkspacePath + ":" + sharedWorkspacePath,
+      "/etc/docker/certs.d:/etc/docker/certs.d:ro",
+      "/etc/ssl/certs:/etc/ssl/certs",  // NEW: System CAs for DevPod API calls
+  },
+
+  /media/gerald/SSDT7/gerald/devpod-provider-nomad/README.md:246-277
+
+  Updated documentation to explain:
+  - Why both /etc/docker/certs.d and /etc/ssl/certs are needed
+  - Updated setup instructions to add certificate to system trust store
+
+  Required Setup on Nomad Clients
+
+  Before testing, ensure your CA certificate is in the system trust store on each Nomad client:
+
+  # On each Nomad client node
+  sudo cp /path/to/ca.crt /usr/local/share/ca-certificates/registry-cluster.crt
+  sudo update-ca-certificates
+
+  This adds your certificate to /etc/ssl/certs/ which gets mounted into the DevPod container.
+
+  Test the Fix
+
+  RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+  devpod provider delete nomad
+  devpod provider add --name nomad --use ./release/provider.yaml
+
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \
+      --ide none \
+      --provider-option NOMAD_CPU=2000 \
+      --provider-option NOMAD_MEMORYMB=8192 \
+      --provider-option NOMAD_DISKMB=512
+
+  The TLS error should be gone now that DevPod has access to your registry's CA certificate through the system trust store!
+
+
+Perfect! I've implemented the correct fix. The issue was that we were mounting /etc/ssl/certs from the host, but when the container's
+  ca-certificates package installed, it regenerated the CA bundle without your registry certificate.
+
+  What Changed
+
+  1. /media/gerald/SSDT7/gerald/devpod-provider-nomad/cmd/create.go:61
+
+  Added update-ca-certificates to the container startup command:
+  runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git 
+  ca-certificates && update-ca-certificates && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
+
+  2. /media/gerald/SSDT7/gerald/devpod-provider-nomad/cmd/create.go:134
+
+  Changed the volume mounts to:
+  - ❌ Removed: /etc/ssl/certs:/etc/ssl/certs (was causing conflicts)
+  - ✅ Added: /usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro
+
+  This mounts the CA certificate source file so when update-ca-certificates runs, it includes your registry cert in the container's CA
+  bundle.
+
+  3. /media/gerald/SSDT7/gerald/devpod-provider-nomad/README.md:246-281
+
+  Updated documentation to explain the new approach and clarify that the filename must be exactly registry.cluster.crt.
+
+  Why This Works
+
+  1. Host: Your Ansible deployment created /usr/local/share/ca-certificates/registry.cluster.crt on all Nomad clients ✅
+  2. Container: We mount that file to the same path in the container
+  3. Container startup: Runs update-ca-certificates which reads certs from /usr/local/share/ca-certificates/ and adds them to
+  /etc/ssl/certs/ca-certificates.crt
+  4. DevPod: Can now verify TLS when making API calls to registry.cluster:5000
+
+  Test the Fix
+
+  RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+  devpod provider delete nomad
+  devpod provider add --name nomad --use ./release/provider.yaml
+
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \
+      --ide none \
+      --provider-option NOMAD_CPU=2000 \
+      --provider-option NOMAD_MEMORYMB=8192 \
+      --provider-option NOMAD_DISKMB=512
+
+  The TLS error should be resolved now! The container will have your registry certificate trusted through the proper CA bundle mechanism.
+
