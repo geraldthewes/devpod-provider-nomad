@@ -138,7 +138,7 @@ func (cmd *CreateCmd) Run(
 
 		// Set optional Vault fields if provided
 		if options.VaultRole != "" {
-			task.Vault.Role = &options.VaultRole
+			task.Vault.Role = options.VaultRole
 		}
 		if options.VaultNamespace != "" {
 			task.Vault.Namespace = &options.VaultNamespace
@@ -181,8 +181,9 @@ func generateVaultTemplates(secrets []options.VaultSecret, changeMode string) []
 	templates := make([]*api.Template, len(secrets))
 	for i, secret := range secrets {
 		tmpl := generateSecretTemplate(secret)
+		destPath := "secrets/vault-" + strconv.Itoa(i) + ".env"
 		templates[i] = &api.Template{
-			DestPath:     "secrets/vault-" + strconv.Itoa(i) + ".env",
+			DestPath:     &destPath,
 			EmbeddedTmpl: &tmpl,
 			Envvars:      boolPtr(true), // Makes secrets available as environment variables
 			ChangeMode:   &changeMode,

@@ -484,7 +484,6 @@ devpod provider set-options nomad \
       "path": "secret/data/ml/tokens",
       "fields": {
         "hf_token": "HUGGING_FACE_HUB_TOKEN",
-        "openai_key": "OPENAI_API_KEY"
       }
     }
   ]'
