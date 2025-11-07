@@ -57,9 +57,9 @@ func (cmd *CreateCmd) Run(
 	sharedWorkspacePath := "/tmp/devpod-workspaces"
 	env := map[string]string{}
 	entrypoint := ""
-	// Create shared workspace dir, install dependencies, make Vault secrets available via /etc/profile.d/
-	// Copy vault env files to /etc/profile.d/ so they're sourced by login shells (including devpod ssh)
-	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && for f in /secrets/vault-*.env; do [ -f \"$f\" ] && cp \"$f\" \"/etc/profile.d/$(basename \"$f\").sh\"; done && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
+	// Create shared workspace dir, install dependencies, combine Vault secrets into shared location
+	// Combine all vault secrets into /tmp/devpod-workspaces/.vault-secrets which is mounted in devcontainers
+	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && for f in /secrets/vault-*.env; do [ -f \"$f\" ] && cat \"$f\" >> " + sharedWorkspacePath + "/.vault-secrets; done && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
