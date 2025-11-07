@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	"github.com/briancain/devpod-provider-nomad/pkg/nomad"
@@ -60,7 +59,8 @@ func (cmd *CreateCmd) Run(
 	entrypoint := ""
 	// Create shared workspace dir, install dependencies, configure Vault secrets
 	// Create docker wrapper that auto-injects Vault secrets into containers
-	dockerWrapper := `#!/bin/sh
+	runCmd := []string{"/bin/sh", "-c", `mkdir -p ` + sharedWorkspacePath + ` && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && mv /usr/bin/docker /usr/bin/docker.real && cat > /usr/bin/docker << 'DOCKERWRAPPER'
+#!/bin/sh
 # Docker wrapper that injects Vault secrets into containers
 VAULT_VARS=""
 for f in /secrets/vault-*.env; do
@@ -74,8 +74,8 @@ if [ "$1" = "run" ] || [ "$1" = "create" ]; then
 else
   exec /usr/bin/docker.real "$@"
 fi
-`
-	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && mv /usr/bin/docker /usr/bin/docker.real && printf '%s' " + fmt.Sprintf("%q", dockerWrapper) + " > /usr/bin/docker && chmod +x /usr/bin/docker && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
+DOCKERWRAPPER
+chmod +x /usr/bin/docker && sleep 2 && touch /tmp/.devpod-ready && sleep infinity`}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
