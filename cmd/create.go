@@ -58,24 +58,10 @@ func (cmd *CreateCmd) Run(
 	env := map[string]string{}
 	entrypoint := ""
 	// Create shared workspace dir, install dependencies, configure Vault secrets
-	// Create docker wrapper that auto-injects Vault secrets into containers
-	runCmd := []string{"/bin/sh", "-c", `mkdir -p ` + sharedWorkspacePath + ` && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && mv /usr/bin/docker /usr/bin/docker.real && cat > /usr/bin/docker << 'DOCKERWRAPPER'
-#!/bin/sh
-# Docker wrapper that injects Vault secrets into containers
-VAULT_VARS=""
-for f in /secrets/vault-*.env; do
-  [ -f "$f" ] && . "$f"
-done
-for var in $(env | grep -E '^(AWS_|HF_|VAULT_)' | cut -d= -f1); do
-  VAULT_VARS="$VAULT_VARS -e $var"
-done
-if [ "$1" = "run" ] || [ "$1" = "create" ]; then
-  exec /usr/bin/docker.real "$1" $VAULT_VARS "${@:2}"
-else
-  exec /usr/bin/docker.real "$@"
-fi
-DOCKERWRAPPER
-chmod +x /usr/bin/docker && sleep 2 && touch /tmp/.devpod-ready && sleep infinity`}
+	// Docker wrapper script (base64 encoded to avoid shell expansion issues)
+	// Decodes and installs wrapper that auto-injects Vault secrets into containers
+	dockerWrapperB64 := "IyEvYmluL3NoCiMgRG9ja2VyIHdyYXBwZXIgdGhhdCBpbmplY3RzIFZhdWx0IHNlY3JldHMgaW50byBjb250YWluZXJzClZBVUxUX1ZBUlM9IiIKZm9yIGYgaW4gL3NlY3JldHMvdmF1bHQtKi5lbnY7IGRvCiAgWyAtZiAiJGYiIF0gJiYgLiAiJGYiCmRvbmUKZm9yIHZhciBpbiAkKGVudiB8IGdyZXAgLUUgJ14oQVdTX3xIRl98VkFVTFRfKScgfCBjdXQgLWQ9IC1mMSk7IGRvCiAgVkFVTFRfVkFSUz0iJFZBVUxUX1ZBUlMgLWUgJHZhciIKZG9uZQppZiBbICIkMSIgPSAicnVuIiBdIHx8IFsgIiQxIiA9ICJjcmVhdGUiIF07IHRoZW4KICBleGVjIC91c3IvYmluL2RvY2tlci5yZWFsICIkMSIgJFZBVUxUX1ZBUlMgIiR7QDoyfSIKZWxzZQogIGV4ZWMgL3Vzci9iaW4vZG9ja2VyLnJlYWwgIiRAIgpmaQo="
+	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && mv /usr/bin/docker /usr/bin/docker.real && echo " + dockerWrapperB64 + " | base64 -d > /usr/bin/docker && chmod +x /usr/bin/docker && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
