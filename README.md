@@ -652,5 +652,63 @@ devpod provider add --name nomad --use ./release/provider.yaml
 4. Test the provider
 
 ```shell
-devpod up <repository-url> --provider nomad --debug 
+devpod up <repository-url> --provider nomad --debug
 ```
+
+## Development vs Production Builds
+
+The build script supports two modes: development builds (`--dev`) and production builds (no flag).
+
+### Production Build (no `--dev`)
+
+**Binary paths:** Points to GitHub releases
+```yaml
+path: https://github.com/geraldthewes/devpod-provider-nomad/releases/download/v0.1.4/devpod-provider-nomad-linux-amd64
+```
+
+**Use case:**
+- For official releases distributed via GitHub
+- DevPod downloads the binaries from GitHub releases
+- Users install with: `devpod provider add https://github.com/geraldthewes/devpod-provider-nomad`
+
+**Build command:**
+```bash
+RELEASE_VERSION=0.1.4 ./hack/build.sh
+```
+
+### Dev Build (`--dev`)
+
+**Binary paths:** Points to your local filesystem
+```yaml
+path: /path/to/devpod-provider-nomad/release/devpod-provider-nomad-linux-amd64
+```
+
+**Use case:**
+- For local development and testing
+- DevPod uses your locally built binaries directly
+- No need to publish to GitHub between code changes
+- Install with: `devpod provider add ./release/provider.yaml`
+
+**Build command:**
+```bash
+RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+```
+
+### Why Use `--dev`?
+
+The `--dev` flag creates a rapid iteration loop for development:
+
+**Without `--dev`:** You'd have to:
+1. Make code changes
+2. Commit and push to GitHub
+3. Create a GitHub release
+4. Wait for release to publish
+5. Test your changes
+
+**With `--dev`:** You can:
+1. Make code changes
+2. Run `./hack/build.sh --dev`
+3. Run `devpod provider add ./release/provider.yaml`
+4. Test immediately with local binaries
+
+**Recommendation:** Use `--dev` for local development and testing. Only use production builds when creating official releases.
