@@ -27,6 +27,41 @@ options:
   NOMAD_DISKMB:
     description: The ephemeral disk in mb to use for the Nomad Job
     default: "300"
+  VAULT_ADDR:
+    description: |-
+      Vault server address (e.g., https://vault.example.com:8200).
+      Required when VAULT_SECRETS_JSON is specified.
+    default:
+  VAULT_ROLE:
+    description: |-
+      Vault role for Nomad workload identity authentication.
+      Used by Nomad to obtain Vault tokens for the task.
+    default: "nomad-workloads"
+  VAULT_NAMESPACE:
+    description: |-
+      Vault namespace (Vault Enterprise only).
+      Leave empty if not using Vault Enterprise namespaces.
+    default:
+  VAULT_CHANGE_MODE:
+    description: |-
+      Action to take when secrets change (restart, noop, or signal).
+      restart: Restart the task when secrets change (default).
+      noop: Do nothing when secrets change.
+      signal: Send a signal when secrets change.
+    default: "restart"
+  VAULT_POLICIES_JSON:
+    description: |-
+      JSON array of Vault policies to attach to the task.
+      Example: ["aws-read", "database-read"]
+      Required when VAULT_SECRETS_JSON is specified.
+    default:
+  VAULT_SECRETS_JSON:
+    description: |-
+      JSON array of Vault secret configurations.
+      Each secret specifies a Vault KV v2 path and field-to-env-var mappings.
+      Example: [{"path":"secret/data/aws/creds","fields":{"access_key":"AWS_ACCESS_KEY_ID","secret_key":"AWS_SECRET_ACCESS_KEY"}}]
+      Secrets are injected as environment variables into the container.
+    default:
 agent:
   path: ${AGENT_PATH}
   dataPath: ${AGENT_DATA_PATH}
