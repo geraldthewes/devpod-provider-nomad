@@ -119,9 +119,21 @@ nomad job status vscode-remote-try-node
 ALLOC_ID=$(nomad job status vscode-remote-try-node | grep running | awk '{print $1}' | head -1)
 nomad alloc logs $ALLOC_ID
 
-# SSH into workspace and verify environment variables
+# SSH into workspace and verify secrets are accessible
 devpod ssh vscode-remote-try-node
+
+# Check if secrets file exists in workspace root (created automatically by provider)
+ls -la .vault-secrets
+
+# View the secrets file content
+cat .vault-secrets
+
+# Source the secrets and verify environment variables
+source .vault-secrets
 env | grep -E 'TEST_KEY|API_TOKEN|AWS_'
+
+# Test sourcing in a script
+echo 'source .vault-secrets && echo "Secrets loaded: TEST_KEY=$TEST_KEY"' | bash
 ```
 
 ### Troubleshooting Test Issues
@@ -140,6 +152,18 @@ nomad alloc logs -f $ALLOC_ID
 # Verify Vault policy and secrets exist
 vault policy read devpod-test
 vault kv get secret/test/devpod
+
+# Check if secrets file was created in Nomad task
+nomad alloc exec $ALLOC_ID ls -la /tmp/devpod-workspaces/.vault-secrets
+nomad alloc exec $ALLOC_ID cat /tmp/devpod-workspaces/.vault-secrets
+
+# Check if secrets are in Nomad task environment
+nomad alloc exec $ALLOC_ID env | grep -E 'AWS_|TEST_'
+
+# If file exists in Nomad task but not in devcontainer, check mount
+devpod ssh vscode-remote-try-node
+ls -la /tmp/devpod-workspaces/
+mount | grep devpod
 ```
 
 **Test validation errors:**

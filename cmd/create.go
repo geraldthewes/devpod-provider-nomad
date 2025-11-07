@@ -58,8 +58,9 @@ func (cmd *CreateCmd) Run(
 	env := map[string]string{}
 	entrypoint := ""
 	// Create shared workspace dir, install dependencies, combine Vault secrets into shared location
-	// Combine all vault secrets into /tmp/devpod-workspaces/.vault-secrets which is mounted in devcontainers
-	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && for f in /secrets/vault-*.env; do [ -f \"$f\" ] && cat \"$f\" >> " + sharedWorkspacePath + "/.vault-secrets; done && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
+	// Combine all vault secrets into /tmp/devpod-workspaces/.vault-secrets
+	// Start background process to copy secrets to workspace content directories as they're created
+	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && for f in /secrets/vault-*.env; do [ -f \"$f\" ] && cat \"$f\" >> " + sharedWorkspacePath + "/.vault-secrets; done && sleep 2 && touch /tmp/.devpod-ready && (while true; do find " + sharedWorkspacePath + "/agent/contexts/*/workspaces/*/content -maxdepth 0 -type d 2>/dev/null | while read wsdir; do if [ -f " + sharedWorkspacePath + "/.vault-secrets ] && [ ! -f \"$wsdir/.vault-secrets\" ]; then cp " + sharedWorkspacePath + "/.vault-secrets \"$wsdir/.vault-secrets\" && chmod 644 \"$wsdir/.vault-secrets\"; fi; done; sleep 5; done) & sleep infinity"}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
@@ -202,7 +203,7 @@ func generateSecretTemplate(secret options.VaultSecret) string {
 		template += "export " + envVar + "=\"{{ .Data.data." + vaultField + " }}\"\n"
 	}
 
-	template += "{{- end -}}\n"
+	template += "{{- end }}\n"  // Don't strip trailing whitespace to preserve newlines
 	return template
 }
 

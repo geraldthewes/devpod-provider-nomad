@@ -600,6 +600,83 @@ devpod provider set-options nomad \
 5. ✅ View allocation logs: `nomad alloc logs <alloc-id>`
 6. ✅ Verify the Vault role exists and is configured for Nomad workload identity
 
+### Using Secrets in Your Devcontainer
+
+The provider automatically copies all Vault secrets to `.vault-secrets` in your workspace root. This file contains export statements that can be sourced by your shell to load the secrets as environment variables.
+
+**Add to your setup.sh (or other initialization script):**
+
+```bash
+#!/bin/bash
+# Source Vault secrets if available
+VAULT_SECRETS_FILE="/workspaces/$(basename $PWD)/.vault-secrets"
+
+if [ -f "$VAULT_SECRETS_FILE" ]; then
+    echo "Loading Vault secrets..."
+    set -a  # automatically export all variables
+    source "$VAULT_SECRETS_FILE"
+    set +a
+    echo "✓ Vault secrets loaded"
+else
+    echo "WARNING: Vault secrets file not found at $VAULT_SECRETS_FILE"
+fi
+
+# Your application setup continues here...
+```
+
+**Or use a simpler path-agnostic version:**
+
+```bash
+#!/bin/bash
+# Source Vault secrets from workspace root
+if [ -f ".vault-secrets" ]; then
+    echo "Loading Vault secrets..."
+    set -a
+    source .vault-secrets
+    set +a
+    echo "✓ Vault secrets loaded"
+fi
+
+# Your application setup continues here...
+```
+
+**Verification:**
+
+Once your workspace is up, SSH in and verify the secrets are accessible:
+
+```bash
+devpod ssh your-workspace
+
+# Check if secrets file exists in workspace root
+ls -la .vault-secrets
+
+# View secrets (be careful - these are real secrets!)
+cat .vault-secrets
+
+# Verify environment variables after sourcing
+source .vault-secrets
+env | grep -E "AWS_|HF_TOKEN"
+```
+
+**Alternative: Use in devcontainer.json**
+
+You can also source secrets automatically via `postCreateCommand`:
+
+```json
+{
+  "name": "My Project",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "bash -c 'test -f .vault-secrets && source .vault-secrets; pip install -r requirements.txt'"
+}
+```
+
+**Important Notes:**
+
+- The `.vault-secrets` file is created automatically in your workspace root when you use Vault integration
+- The file is NOT committed to git (add to `.gitignore` if needed)
+- The secrets are copied to the workspace directory shortly after it's created (within 5 seconds)
+- Each workspace gets its own copy of the secrets file
+
 **Job fails to start with Vault errors:**
 
 Check the allocation logs:

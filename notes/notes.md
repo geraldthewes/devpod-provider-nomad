@@ -1104,6 +1104,46 @@ Perfect! I've implemented the correct fix. The issue was that we were mounting /
 
   The TLS error should be resolved now! The container will have your registry certificate trusted through the proper CA bundle mechanism.
 
+2025-11-07
+----------
+
+## Vault Secrets - Making Secrets Accessible in Devcontainer
+
+### Problem
+Vault secrets were being injected into the Nomad task successfully, but were not accessible in the devcontainer.
+
+- Vault integration with `Envvars: true` made secrets available to the Nomad task process
+- Secrets file was written to `/tmp/devpod-workspaces/.vault-secrets` in the Nomad task
+- BUT devcontainer couldn't access this path because `/tmp/devpod-workspaces` is NOT mounted into devcontainer
+- DevPod only mounts the workspace content directory: `/tmp/devpod-workspaces/agent/contexts/default/workspaces/<workspace-name>/content` → `/workspaces/<workspace-name>`
+
+### Solution
+Added background process to the Nomad task init command that automatically copies secrets file to workspace directories:
+
+**Updated cmd/create.go:63:**
+- Background loop runs every 5 seconds
+- Finds all workspace content directories using glob: `$sharedWorkspacePath/agent/contexts/*/workspaces/*/content`
+- Copies `.vault-secrets` file to each workspace content directory if not already present
+- Sets proper permissions (644)
+
+**Result:**
+- Secrets file appears at `/workspaces/<workspace-name>/.vault-secrets` in devcontainer
+- User can source the file in their `setup.sh` script: `source .vault-secrets`
+- Works for all workspaces automatically
+
+### Testing
+```bash
+# Verify in Nomad task
+nomad alloc exec <alloc-id> ls -la /tmp/devpod-workspaces/.vault-secrets
+
+# Verify in devcontainer
+devpod ssh <workspace>
+ls -la .vault-secrets
+cat .vault-secrets
+source .vault-secrets
+env | grep -E 'AWS_|HF_'
+```
+
 2025-11-06
 ----------
 
