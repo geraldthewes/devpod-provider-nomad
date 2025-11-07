@@ -360,7 +360,22 @@ The provider supports HashiCorp Vault integration for securely injecting secrets
 
 ### Configuration
 
-Configure Vault integration using provider options:
+You can configure Vault integration per-workspace or as persistent defaults:
+
+#### Per-Workspace Configuration (One-Time)
+
+Configure for a specific workspace using `--provider-option` flags:
+
+```bash
+devpod up <repository-url> --provider nomad \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option VAULT_POLICIES_JSON='["aws-read","database-read"]' \
+  --provider-option VAULT_SECRETS_JSON='[{"path":"secret/data/aws/credentials","fields":{"access_key_id":"AWS_ACCESS_KEY_ID","secret_access_key":"AWS_SECRET_ACCESS_KEY"}}]'
+```
+
+#### Persistent Default Configuration
+
+Set as defaults for all workspaces using `devpod provider set-options`:
 
 ```bash
 # Set Vault connection settings
@@ -384,6 +399,12 @@ devpod provider set-options nomad \
       }
     }
   ]'
+```
+
+Verify your configuration:
+
+```bash
+devpod provider options nomad
 ```
 
 ### Configuration Format

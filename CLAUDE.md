@@ -53,13 +53,11 @@ devpod provider delete nomad
 # Build the provider
 RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
 
-# Configure Vault integration
-export VAULT_ADDR="https://vault.example.com:8200"
-export VAULT_POLICIES_JSON='["devpod-test"]'
-export VAULT_SECRETS_JSON='[{"path":"secret/data/test/devpod","fields":{"test_key":"TEST_KEY","api_token":"API_TOKEN"}}]'
-
-# Launch workspace with Vault secrets
-devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+# Launch workspace with Vault secrets using --provider-option flags
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option VAULT_POLICIES_JSON='["devpod-test"]' \
+  --provider-option VAULT_SECRETS_JSON='[{"path":"secret/data/test/devpod","fields":{"test_key":"TEST_KEY","api_token":"API_TOKEN"}}]'
 
 # Verify secrets are injected
 devpod ssh vscode-remote-try-node
@@ -85,26 +83,12 @@ path "secret/data/test/aws" {
 }
 EOF
 
-# Test with multiple secrets
-export VAULT_SECRETS_JSON='[
-  {
-    "path": "secret/data/test/devpod",
-    "fields": {
-      "test_key": "TEST_KEY",
-      "api_token": "API_TOKEN"
-    }
-  },
-  {
-    "path": "secret/data/test/aws",
-    "fields": {
-      "access_key": "AWS_ACCESS_KEY_ID",
-      "secret_key": "AWS_SECRET_ACCESS_KEY"
-    }
-  }
-]'
-
+# Test with multiple secrets using --provider-option
 devpod delete 'vscode-remote-try-node'
-devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option VAULT_POLICIES_JSON='["devpod-test"]' \
+  --provider-option VAULT_SECRETS_JSON='[{"path":"secret/data/test/devpod","fields":{"test_key":"TEST_KEY","api_token":"API_TOKEN"}},{"path":"secret/data/test/aws","fields":{"access_key":"AWS_ACCESS_KEY_ID","secret_key":"AWS_SECRET_ACCESS_KEY"}}]'
 ```
 
 ### Test Per-Workspace Configuration
@@ -161,19 +145,21 @@ vault kv get secret/test/devpod
 **Test validation errors:**
 ```bash
 # Test missing VAULT_ADDR (should fail)
-unset VAULT_ADDR
-export VAULT_SECRETS_JSON='[{"path":"secret/data/test","fields":{"key":"VAR"}}]'
-devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+  --provider-option VAULT_SECRETS_JSON='[{"path":"secret/data/test","fields":{"key":"VAR"}}]'
 # Expected: Error about VAULT_ADDR required
 
 # Test missing policies (should fail)
-export VAULT_ADDR="https://vault.example.com:8200"
-unset VAULT_POLICIES_JSON
-devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option VAULT_SECRETS_JSON='[{"path":"secret/data/test","fields":{"key":"VAR"}}]'
 # Expected: Error about VAULT_POLICIES_JSON required
 
 # Test invalid change mode (should fail)
-export VAULT_CHANGE_MODE="invalid"
-devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option VAULT_POLICIES_JSON='["test"]' \
+  --provider-option VAULT_SECRETS_JSON='[{"path":"secret/data/test","fields":{"key":"VAR"}}]' \
+  --provider-option VAULT_CHANGE_MODE=invalid
 # Expected: Error about invalid change mode
 ```
