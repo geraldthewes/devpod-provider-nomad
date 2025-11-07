@@ -340,6 +340,275 @@ This is a DNS issue, not a certificate issue:
 - Ensure `registry.cluster` resolves correctly on the Nomad client nodes
 - Add an entry to `/etc/hosts` if needed: `10.0.1.12 registry.cluster`
 
+## Vault Secrets Integration
+
+The provider supports HashiCorp Vault integration for securely injecting secrets as environment variables into your development containers. This leverages Nomad's native Vault integration, where Nomad handles authentication, token management, and secret renewal automatically.
+
+### How It Works
+
+1. You configure Vault policies and secret paths via provider options
+2. Nomad authenticates to Vault using workload identity
+3. Nomad fetches secrets from Vault and renders them as environment variables
+4. Secrets are automatically rotated/renewed by Nomad
+5. Secrets never appear in job specifications or logs
+
+### Prerequisites
+
+- Nomad cluster with Vault integration enabled
+- Vault policies configured and accessible to Nomad
+- Secrets stored in Vault KV v2 (paths like `secret/data/...`)
+
+### Configuration
+
+Configure Vault integration using provider options:
+
+```bash
+# Set Vault connection settings
+devpod provider set-options nomad \
+  --option VAULT_ADDR=https://vault.example.com:8200 \
+  --option VAULT_ROLE=nomad-workloads
+
+# Set Vault policies (JSON array)
+devpod provider set-options nomad \
+  --option VAULT_POLICIES_JSON='["aws-read","database-read"]'
+
+# Set Vault secrets configuration (JSON array)
+devpod provider set-options nomad \
+  --option VAULT_SECRETS_JSON='[
+    {
+      "path": "secret/data/aws/credentials",
+      "fields": {
+        "access_key_id": "AWS_ACCESS_KEY_ID",
+        "secret_access_key": "AWS_SECRET_ACCESS_KEY",
+        "region": "AWS_DEFAULT_REGION"
+      }
+    }
+  ]'
+```
+
+### Configuration Format
+
+**VAULT_SECRETS_JSON** expects an array of secret configurations:
+
+```json
+[
+  {
+    "path": "secret/data/path/to/secret",
+    "fields": {
+      "vault_field_name": "ENV_VAR_NAME"
+    }
+  }
+]
+```
+
+- **path**: Vault KV v2 path (must include `/data/` in the path)
+- **fields**: Map of Vault field names to environment variable names
+  - Key (left side): Field name in the Vault secret
+  - Value (right side): Environment variable name in the container
+
+### Complete Example
+
+**Step 1:** Store secrets in Vault (KV v2):
+
+```bash
+# Write AWS credentials to Vault
+vault kv put secret/aws/transcription \
+  access_key_id="AKIAIOSFODNN7EXAMPLE" \
+  secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" \
+  region="us-west-2"
+
+# Write ML API tokens to Vault
+vault kv put secret/ml/tokens \
+  hf_token="hf_xxxxxxxxxxxxxxxxxxxxx" \
+  openai_key="sk-xxxxxxxxxxxxxxxxxxxxx"
+```
+
+**Step 2:** Create Vault policy file `devpod-secrets.hcl`:
+
+```hcl
+# Allow reading AWS credentials
+path "secret/data/aws/transcription" {
+  capabilities = ["read"]
+}
+
+# Allow reading ML tokens
+path "secret/data/ml/tokens" {
+  capabilities = ["read"]
+}
+```
+
+**Step 3:** Apply the policy:
+
+```bash
+vault policy write devpod-secrets devpod-secrets.hcl
+```
+
+**Step 4:** Configure DevPod provider:
+
+```bash
+devpod provider set-options nomad \
+  --option VAULT_ADDR=https://vault.example.com:8200 \
+  --option VAULT_ROLE=nomad-workloads \
+  --option VAULT_POLICIES_JSON='["devpod-secrets"]' \
+  --option VAULT_SECRETS_JSON='[
+    {
+      "path": "secret/data/aws/transcription",
+      "fields": {
+        "access_key_id": "AWS_ACCESS_KEY_ID",
+        "secret_access_key": "AWS_SECRET_ACCESS_KEY",
+        "region": "AWS_DEFAULT_REGION"
+      }
+    },
+    {
+      "path": "secret/data/ml/tokens",
+      "fields": {
+        "hf_token": "HUGGING_FACE_HUB_TOKEN",
+        "openai_key": "OPENAI_API_KEY"
+      }
+    }
+  ]'
+```
+
+**Step 5:** Launch your workspace:
+
+```bash
+devpod up github.com/your-org/your-project --provider nomad
+```
+
+**Step 6:** Verify secrets are available:
+
+```bash
+devpod ssh your-workspace
+
+# Check environment variables
+echo $AWS_ACCESS_KEY_ID
+echo $AWS_SECRET_ACCESS_KEY
+echo $HUGGING_FACE_HUB_TOKEN
+```
+
+### Per-Workspace Configuration
+
+You can also configure Vault secrets per-workspace using environment variables in your `.devcontainer/devcontainer.json`:
+
+```json
+{
+  "name": "ML Training Project",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "remoteEnv": {
+    "VAULT_ADDR": "https://vault.example.com:8200",
+    "VAULT_POLICIES_JSON": "[\"ml-secrets\"]",
+    "VAULT_SECRETS_JSON": "[{\"path\":\"secret/data/ml/tokens\",\"fields\":{\"api_key\":\"ML_API_KEY\"}}]"
+  }
+}
+```
+
+### Advanced Configuration
+
+**Vault Namespace (Vault Enterprise):**
+
+```bash
+devpod provider set-options nomad \
+  --option VAULT_NAMESPACE=engineering/ml-team
+```
+
+**Custom Change Mode:**
+
+Control what happens when secrets change:
+
+```bash
+# restart: Restart the task (default)
+devpod provider set-options nomad --option VAULT_CHANGE_MODE=restart
+
+# noop: Do nothing when secrets change
+devpod provider set-options nomad --option VAULT_CHANGE_MODE=noop
+
+# signal: Send SIGHUP when secrets change
+devpod provider set-options nomad --option VAULT_CHANGE_MODE=signal
+```
+
+**Custom Vault Role:**
+
+```bash
+devpod provider set-options nomad \
+  --option VAULT_ROLE=custom-workload-role
+```
+
+### Provider Options Reference
+
+- **VAULT_ADDR** (required if using secrets): Vault server address
+- **VAULT_ROLE** (default: `nomad-workloads`): Vault role for authentication
+- **VAULT_NAMESPACE** (optional): Vault namespace (Enterprise only)
+- **VAULT_CHANGE_MODE** (default: `restart`): Action on secret change (`restart`, `noop`, `signal`)
+- **VAULT_POLICIES_JSON** (required if using secrets): JSON array of Vault policies
+- **VAULT_SECRETS_JSON**: JSON array of secret configurations
+
+### Validation
+
+The provider validates Vault configuration at workspace creation time:
+
+- ✅ If `VAULT_SECRETS_JSON` is set, `VAULT_POLICIES_JSON` is required
+- ✅ If `VAULT_SECRETS_JSON` is set, `VAULT_ADDR` is required
+- ✅ Each secret must have a valid path and at least one field mapping
+- ✅ Change mode must be one of: `restart`, `noop`, `signal`
+
+### Troubleshooting
+
+**Error: "VAULT_POLICIES_JSON is required when VAULT_SECRETS_JSON is specified"**
+
+You must specify Vault policies when using secrets:
+
+```bash
+devpod provider set-options nomad \
+  --option VAULT_POLICIES_JSON='["your-policy-name"]'
+```
+
+**Error: "VAULT_ADDR is required when VAULT_SECRETS_JSON is specified"**
+
+Set the Vault server address:
+
+```bash
+devpod provider set-options nomad \
+  --option VAULT_ADDR=https://vault.example.com:8200
+```
+
+**Secrets not appearing in container:**
+
+1. ✅ Verify Nomad can reach Vault: `nomad server members` and check Vault integration
+2. ✅ Check Vault policies grant read access to the secret paths
+3. ✅ Verify secret path format is KV v2: `secret/data/...` (not `secret/...`)
+4. ✅ Check Nomad job status: `nomad job status <job-id>`
+5. ✅ View allocation logs: `nomad alloc logs <alloc-id>`
+6. ✅ Verify the Vault role exists and is configured for Nomad workload identity
+
+**Job fails to start with Vault errors:**
+
+Check the allocation logs:
+
+```bash
+# Get your job ID (usually your workspace name)
+devpod list
+
+# Check job status
+nomad job status <job-id>
+
+# View allocation logs
+nomad alloc logs <alloc-id>
+```
+
+Common issues:
+- Vault policy doesn't exist or isn't attached to the Nomad role
+- Secret path doesn't exist in Vault
+- Secret path format is incorrect (missing `/data/` for KV v2)
+- Vault role isn't configured in Nomad's Vault integration
+
+### Security Best Practices
+
+1. **Use specific policies**: Grant minimum required permissions
+2. **Rotate secrets regularly**: Vault supports automatic rotation
+3. **Use KV v2**: Enables secret versioning and audit trails
+4. **Monitor access**: Enable Vault audit logging
+5. **Separate policies per workspace**: Use different policies for different projects
+
 ## Testing Locally
 
 1. Build the provider locally

@@ -101,6 +101,53 @@ func (cmd *CreateCmd) Run(
 	}
 
 	jobName := "devpod"
+
+	// Create the base task
+	task := &api.Task{
+		Name: options.TaskName,
+		User: user,
+		Env:  env,
+		Config: map[string]interface{}{
+			"image": image,
+			"args":  runCmd,
+			// Mount Docker socket from host for Docker-in-Docker support
+			// Mount workspace directory at the SAME path on host and container
+			// This is critical: when DevPod tells Docker to bind mount paths,
+			// Docker needs to find them on the host at the same path
+			// Mount Docker registry certificates for Docker daemon
+			// Mount CA certificate source file so update-ca-certificates includes it
+			"volumes": []string{
+				"/var/run/docker.sock:/var/run/docker.sock",
+				sharedWorkspacePath + ":" + sharedWorkspacePath,
+				"/etc/docker/certs.d:/etc/docker/certs.d:ro",
+				"/usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro",
+			},
+			"privileged":   true,
+			"network_mode": "bridge",
+		},
+		Resources: jobResources,
+		Driver:    "docker",
+	}
+
+	// Add Vault integration if configured
+	if len(options.VaultSecrets) > 0 {
+		task.Vault = &api.Vault{
+			Policies:   options.VaultPolicies,
+			ChangeMode: &options.VaultChangeMode,
+		}
+
+		// Set optional Vault fields if provided
+		if options.VaultRole != "" {
+			task.Vault.Role = &options.VaultRole
+		}
+		if options.VaultNamespace != "" {
+			task.Vault.Namespace = &options.VaultNamespace
+		}
+
+		// Generate and attach Vault secret templates
+		task.Templates = generateVaultTemplates(options.VaultSecrets, options.VaultChangeMode)
+	}
+
 	job := &api.Job{
 		ID:        &options.JobId,
 		Name:      &jobName,
@@ -112,33 +159,7 @@ func (cmd *CreateCmd) Run(
 				EphemeralDisk: &api.EphemeralDisk{
 					SizeMB: &disk,
 				},
-				Tasks: []*api.Task{
-					{
-						Name: options.TaskName,
-						User: user,
-						Env:  env,
-						Config: map[string]interface{}{
-							"image": image,
-							"args":  runCmd,
-							// Mount Docker socket from host for Docker-in-Docker support
-							// Mount workspace directory at the SAME path on host and container
-							// This is critical: when DevPod tells Docker to bind mount paths,
-							// Docker needs to find them on the host at the same path
-							// Mount Docker registry certificates for Docker daemon
-							// Mount CA certificate source file so update-ca-certificates includes it
-							"volumes": []string{
-								"/var/run/docker.sock:/var/run/docker.sock",
-								sharedWorkspacePath + ":" + sharedWorkspacePath,
-								"/etc/docker/certs.d:/etc/docker/certs.d:ro",
-								"/usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro",
-							},
-							"privileged":   true,
-							"network_mode": "bridge",
-						},
-						Resources: jobResources,
-						Driver:    "docker",
-					},
-				},
+				Tasks: []*api.Task{task},
 			},
 		},
 	}
@@ -149,4 +170,41 @@ func (cmd *CreateCmd) Run(
 	}
 
 	return nil
+}
+
+// generateVaultTemplates creates Nomad template stanzas for Vault secrets
+func generateVaultTemplates(secrets []options.VaultSecret, changeMode string) []*api.Template {
+	if len(secrets) == 0 {
+		return nil
+	}
+
+	templates := make([]*api.Template, len(secrets))
+	for i, secret := range secrets {
+		tmpl := generateSecretTemplate(secret)
+		templates[i] = &api.Template{
+			DestPath:     "secrets/vault-" + strconv.Itoa(i) + ".env",
+			EmbeddedTmpl: &tmpl,
+			Envvars:      boolPtr(true), // Makes secrets available as environment variables
+			ChangeMode:   &changeMode,
+		}
+	}
+
+	return templates
+}
+
+// generateSecretTemplate creates a Nomad template string for a single Vault secret
+func generateSecretTemplate(secret options.VaultSecret) string {
+	template := "{{- with secret \"" + secret.Path + "\" -}}\n"
+
+	for vaultField, envVar := range secret.Fields {
+		template += "export " + envVar + "=\"{{ .Data.data." + vaultField + " }}\"\n"
+	}
+
+	template += "{{- end -}}\n"
+	return template
+}
+
+// boolPtr returns a pointer to a bool value
+func boolPtr(b bool) *bool {
+	return &b
 }
