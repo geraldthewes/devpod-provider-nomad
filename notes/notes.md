@@ -1104,3 +1104,317 @@ Perfect! I've implemented the correct fix. The issue was that we were mounting /
 
   The TLS error should be resolved now! The container will have your registry certificate trusted through the proper CA bundle mechanism.
 
+2025-11-06
+----------
+
+Vault Secrets Integration Plan
+
+ Overview
+
+ Add Nomad-native Vault integration to inject secrets as environment variables into DevPod workspaces. Secrets are fetched by Nomad (not the
+ provider) using Vault policies and rendered via Nomad templates.
+
+ Implementation Steps
+
+ 1. Define Vault Configuration Structure
+
+ File: pkg/options/options.go
+
+ Add new types and fields:
+ // VaultSecret represents a secret path and field mappings
+ type VaultSecret struct {
+     Path   string            // Vault KV v2 path (e.g., "secret/data/aws/creds")
+     Fields map[string]string // vault_field -> ENV_VAR_NAME
+ }
+
+ // Add to Options struct:
+ type Options struct {
+     // ... existing fields ...
+
+     // Vault configuration
+     VaultAddr       string
+     VaultRole       string
+     VaultNamespace  string
+     VaultChangeMode string
+     VaultPolicies   []string
+     VaultSecrets    []VaultSecret
+ }
+
+ Parse from environment variables in DefaultOptions():
+ - VAULT_ADDR (required if secrets configured)
+ - VAULT_ROLE (default: "nomad-workloads")
+ - VAULT_NAMESPACE (optional)
+ - VAULT_CHANGE_MODE (default: "restart")
+ - VAULT_POLICIES_JSON (JSON array)
+ - VAULT_SECRETS_JSON (JSON array of objects)
+
+ Add validation: if VAULT_SECRETS_JSON is set, require VAULT_POLICIES_JSON and VAULT_ADDR.
+
+ 2. Generate Nomad Template Stanzas
+
+ File: cmd/create.go
+
+ Add function to generate Vault templates:
+ func generateVaultTemplates(secrets []VaultSecret) []*api.Template {
+     templates := make([]*api.Template, len(secrets))
+
+     for i, secret := range secrets {
+         tmpl := generateSecretTemplate(secret)
+         templates[i] = &api.Template{
+             DestPath:     fmt.Sprintf("secrets/vault-%d.env", i),
+             EmbeddedTmpl: tmpl,
+             Envvars:      true,  // Key: makes secrets available as env vars
+             ChangeMode:   options.VaultChangeMode,
+         }
+     }
+     return templates
+ }
+
+ func generateSecretTemplate(secret VaultSecret) string {
+     // Generate: {{ with secret "path" }}export VAR="{{ .Data.data.field }}"{{ end }}
+ }
+
+ 3. Update Job Specification
+
+ File: cmd/create.go (in createJob() function)
+
+ Add Vault stanza to task if Vault secrets configured:
+ if len(options.VaultSecrets) > 0 {
+     task.Vault = &api.Vault{
+         Policies:   options.VaultPolicies,
+         Role:       options.VaultRole,
+         Namespace:  options.VaultNamespace,
+         ChangeMode: options.VaultChangeMode,
+     }
+
+     task.Templates = generateVaultTemplates(options.VaultSecrets)
+ }
+
+ 4. Add Provider Options Documentation
+
+ File: hack/provider/provider.yaml
+
+ Add Vault-related options:
+   VAULT_ADDR:
+     description: "Vault server address (e.g., https://vault.example.com:8200)"
+   VAULT_ROLE:
+     description: "Vault role for Nomad workload identity"
+     default: "nomad-workloads"
+   VAULT_NAMESPACE:
+     description: "Vault namespace (Vault Enterprise only)"
+   VAULT_CHANGE_MODE:
+     description: "Action when secrets change (restart, noop, signal)"
+     default: "restart"
+   VAULT_POLICIES_JSON:
+     description: "JSON array of Vault policies (e.g., [\"aws-read\", \"db-read\"])"
+   VAULT_SECRETS_JSON:
+     description: "JSON array of Vault secret configurations"
+
+ 5. Update README Documentation
+
+ File: README.md
+
+ Add section on Vault integration:
+ - Configuration examples
+ - .devcontainer.json example with remoteEnv
+ - Vault policy requirements
+ - Template format explanation
+
+ 6. Add Validation and Error Handling
+
+ File: pkg/options/options.go
+
+ - Validate JSON parsing for VAULT_POLICIES_JSON and VAULT_SECRETS_JSON
+ - Validate required fields (path, fields not empty)
+ - Fail fast if Vault config is incomplete
+ - Return clear error messages
+
+ 7. Testing
+
+ File: CLAUDE.md testing section
+
+ Update test commands to include Vault configuration example:
+ export VAULT_ADDR="https://vault.example.com:8200"
+ export VAULT_POLICIES_JSON='["devpod-secrets"]'
+ export VAULT_SECRETS_JSON='[{"path":"secret/data/test","fields":{"key":"TEST_VAR"}}]'
+ devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+
+ Key Design Decisions
+
+ 1. Nomad-native approach: Let Nomad handle Vault token management and secret fetching
+ 2. Environment variables only: Consistent with current architecture, no .devcontainer.json parsing needed
+ 3. JSON for complex data: Use JSON-encoded env vars for policies and secrets configuration
+ 4. Fail-fast: Job creation fails if Vault config is incomplete or invalid
+ 5. No hardcoded values: All settings configurable via environment variables
+ 6. Template-based injection: Secrets rendered to secrets/vault-N.env files, sourced as env vars via Envvars: true
+
+ Files to Modify
+
+ 1. pkg/options/options.go - Add Vault config types and parsing
+ 2. cmd/create.go - Add Vault stanza and template generation
+ 3. hack/provider/provider.yaml - Add provider options
+ 4. README.md - Add documentation
+ 5. CLAUDE.md - Update testing examples
+
+ Testing Requirements
+
+ - Nomad cluster with Vault integration enabled
+ - Vault policies configured for Nomad
+ - Test secrets stored in Vault KV v2
+ - Verify secrets appear as environment variables in container
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+Excellent! I've successfully implemented Vault secrets integration for the devpod-provider-nomad project. Here's a summary of what was
+  done:
+
+  ✅ Implementation Complete
+
+  Files Modified
+
+  1. pkg/options/options.go (pkg/options/options.go:11-173)
+    - Added VaultSecret struct for secret configuration
+    - Added Vault fields to Options struct (VaultAddr, VaultRole, VaultNamespace, VaultChangeMode, VaultPolicies, VaultSecrets)
+    - Implemented parsing of VAULT_POLICIES_JSON and VAULT_SECRETS_JSON environment variables
+    - Added comprehensive validation via ValidateVault() method
+  2. cmd/create.go (cmd/create.go:103-189)
+    - Added generateVaultTemplates() function to create Nomad template stanzas
+    - Added generateSecretTemplate() function to generate Vault secret templates with proper Nomad template syntax
+    - Modified job creation to conditionally add Vault stanza and templates when secrets are configured
+    - Added boolPtr() helper function
+  3. hack/provider/provider.yaml (hack/provider/provider.yaml:30-64)
+    - Added 6 new provider options: VAULT_ADDR, VAULT_ROLE, VAULT_NAMESPACE, VAULT_CHANGE_MODE, VAULT_POLICIES_JSON, VAULT_SECRETS_JSON
+    - Included detailed descriptions and examples for each option
+  4. README.md (README.md:343-611)
+    - Added comprehensive "Vault Secrets Integration" section with:
+        - How it works explanation
+      - Prerequisites
+      - Configuration examples
+      - Complete step-by-step example
+      - Per-workspace configuration
+      - Advanced configuration options
+      - Troubleshooting guide
+      - Security best practices
+  5. CLAUDE.md (CLAUDE.md:4-179)
+    - Added "Testing with Vault Integration" section
+    - Included setup instructions for test secrets and policies
+    - Added test cases for single and multiple secrets
+    - Included verification commands
+    - Added validation error test cases
+
+  Key Features Implemented
+
+  ✅ Nomad-native Vault integration - Leverages Nomad's built-in Vault support✅ Environment variable configuration - All settings via env
+  vars (no hardcoded values)✅ Multiple secrets support - Can inject secrets from multiple Vault paths✅ Comprehensive validation - Fails
+  fast with clear error messages✅ Flexible configuration - Support for Vault namespaces, custom roles, and change modes✅ Per-workspace 
+  overrides - Can configure via .devcontainer.json remoteEnv✅ Secure by design - Secrets never appear in job specs or logs
+
+  Testing the Implementation
+
+  To test the Vault integration:
+
+  # Build the provider
+  RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+
+  # Set up Vault (if needed)
+  vault kv put secret/test/devpod test_key="test_value"
+  vault policy write devpod-test <(echo 'path "secret/data/test/devpod" { capabilities = ["read"] }')
+
+  # Configure and test
+  export VAULT_ADDR="https://vault.example.com:8200"
+  export VAULT_POLICIES_JSON='["devpod-test"]'
+  export VAULT_SECRETS_JSON='[{"path":"secret/data/test/devpod","fields":{"test_key":"TEST_KEY"}}]'
+
+  devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+
+  Next Steps
+
+  1. Test the implementation with your actual Vault cluster
+  2. Verify that secrets appear as environment variables in the container
+  3. Create Vault policies specific to your use case
+  4. Build and release the provider when ready
+
+
+Here's what the --dev flag does and why it's useful:
+
+  Production Build (no --dev)
+
+  Binary paths: Points to GitHub releases
+  path: https://github.com/briancain/devpod-provider-nomad/releases/download/v0.1.4/devpod-provider-nomad-linux-amd64
+
+  Use case:
+  - For official releases distributed via GitHub
+  - DevPod downloads the binaries from GitHub releases
+  - Users install with: devpod provider add https://github.com/...
+
+  Dev Build (--dev)
+
+  Binary paths: Points to your local filesystem
+  path: /media/gerald/SSDT7/gerald/devpod-provider-nomad/release/devpod-provider-nomad-linux-amd64
+
+  Use case:
+  - For local development and testing
+  - DevPod uses your locally built binaries directly (in cmd/create.go:141)
+  - No need to publish to GitHub between code changes
+  - Install with: devpod provider add ./release/provider.yaml
+
+  Problem It Solves
+
+  Without --dev: You'd have to:
+  1. Make code changes
+  2. Commit and push to GitHub
+  3. Create a GitHub release
+  4. Wait for release to publish
+  5. Test your changes
+
+  With --dev: You can:
+  1. Make code changes
+  2. Run ./hack/build.sh --dev
+  3. Run devpod provider add ./release/provider.yaml
+  4. Test immediately with local binaries
+
+  So yes, it's very useful for development! It creates a rapid iteration loop. You should keep using --dev for local development and testing. Only use
+  production builds when creating official releases.
+
+
+
+The Problem
+
+  Vault secrets with Envvars: true only made the environment variables available to the Nomad task process (the shell running sleep infinity). When
+  DevPod created Docker containers inside that task, those containers didn't inherit the environment variables.
+
+  That's why you could see the secrets in the Nomad task (nomad alloc exec showed them), but they weren't in the devcontainer environment.
+
+  The Fix
+
+  I've implemented a dual-template approach:
+
+  1. Individual secret files (secrets/vault-0.env, vault-1.env) with Envvars: true
+    - Makes secrets available to the Nomad task process
+  2. Combined Docker env file (local/docker.env) without Envvars
+    - Contains all secrets in Docker env file format (KEY=value)
+    - Referenced by Docker driver via env_file configuration
+    - Docker automatically loads this file for ALL containers it creates
+
+  This ensures secrets are available both in the task AND in any Docker containers (including your devcontainer).
+
+  Testing
+
+  Now you need to:
+
+  # Delete old workspace
+  devpod delete multistep-transcriber
+
+  # Reinstall provider
+  devpod provider delete nomad
+  devpod provider add --name nomad --use ./release/provider.yaml
+
+  # Recreate with Vault config
+  devpod up /media/gerald/SSDT7/gerald/multistep-transcriber --provider nomad --debug
+
+  # Test in devcontainer
+  devpod ssh multistep-transcriber
+  env | grep -E "AWS_|HF_"
+
+  All your secrets (both AWS keys and HF_TOKEN) should now be available in the devcontainer! 🎉
+

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/briancain/devpod-provider-nomad/pkg/nomad"
@@ -57,9 +58,24 @@ func (cmd *CreateCmd) Run(
 	sharedWorkspacePath := "/tmp/devpod-workspaces"
 	env := map[string]string{}
 	entrypoint := ""
-	// Create shared workspace dir, install curl and git, update CA certificates, create readiness marker, then sleep
-	// Source Vault secrets first so they're in environment for Docker
-	runCmd := []string{"/bin/sh", "-c", "set -a; for f in /secrets/vault-*.env; do [ -f \"$f\" ] && . \"$f\"; done; set +a; mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
+	// Create shared workspace dir, install dependencies, configure Vault secrets
+	// Create docker wrapper that auto-injects Vault secrets into containers
+	dockerWrapper := `#!/bin/sh
+# Docker wrapper that injects Vault secrets into containers
+VAULT_VARS=""
+for f in /secrets/vault-*.env; do
+  [ -f "$f" ] && . "$f"
+done
+for var in $(env | grep -E '^(AWS_|HF_|VAULT_)' | cut -d= -f1); do
+  VAULT_VARS="$VAULT_VARS -e $var"
+done
+if [ "$1" = "run" ] || [ "$1" = "create" ]; then
+  exec /usr/bin/docker.real "$1" $VAULT_VARS "${@:2}"
+else
+  exec /usr/bin/docker.real "$@"
+fi
+`
+	runCmd := []string{"/bin/sh", "-c", "mkdir -p " + sharedWorkspacePath + " && apt-get update -qq && apt-get install -y -qq curl git ca-certificates && update-ca-certificates && mv /usr/bin/docker /usr/bin/docker.real && printf '%s' " + fmt.Sprintf("%q", dockerWrapper) + " > /usr/bin/docker && chmod +x /usr/bin/docker && sleep 2 && touch /tmp/.devpod-ready && sleep infinity"}
 	if options.DriverOpts != nil {
 		if options.DriverOpts.Image != "" {
 			image = options.DriverOpts.Image
