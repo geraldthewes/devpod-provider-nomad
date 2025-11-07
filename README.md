@@ -658,17 +658,50 @@ source .vault-secrets
 env | grep -E "AWS_|HF_TOKEN"
 ```
 
-**Alternative: Use in devcontainer.json**
+**Alternative: Auto-load on every SSH session**
 
-You can also source secrets automatically via `postCreateCommand`:
+To automatically load secrets on every SSH login, add the sourcing to your shell profile during `postCreateCommand`:
+
+```bash
+#!/bin/bash
+# setup.sh
+
+# Source secrets for this session (postCreateCommand)
+if [ -f ".vault-secrets" ]; then
+    source .vault-secrets
+fi
+
+# Add to .bashrc for future SSH sessions
+if [ -f ".vault-secrets" ] && ! grep -q ".vault-secrets" ~/.bashrc 2>/dev/null; then
+    cat >> ~/.bashrc <<'EOF'
+
+# Auto-source Vault secrets on shell startup
+if [ -f .vault-secrets ]; then
+    set -a
+    source .vault-secrets 2>/dev/null
+    set +a
+fi
+EOF
+fi
+
+# Continue with your setup...
+pip install -r requirements.txt
+```
+
+Or use directly in `devcontainer.json`:
 
 ```json
 {
   "name": "My Project",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
-  "postCreateCommand": "bash -c 'test -f .vault-secrets && source .vault-secrets; pip install -r requirements.txt'"
+  "postCreateCommand": "bash -c 'if [ -f .vault-secrets ]; then source .vault-secrets && echo \"if [ -f .vault-secrets ]; then set -a; source .vault-secrets 2>/dev/null; set +a; fi\" >> ~/.bashrc; fi; pip install -r requirements.txt'"
 }
 ```
+
+**Why this matters:**
+- `postCreateCommand` runs in a subprocess - variables don't persist to SSH sessions
+- Adding to `~/.bashrc` ensures secrets are loaded on every interactive shell
+- This makes secrets available when you `devpod ssh` into the workspace
 
 **Important Notes:**
 
@@ -676,6 +709,7 @@ You can also source secrets automatically via `postCreateCommand`:
 - The file is NOT committed to git (add to `.gitignore` if needed)
 - The secrets are copied to the workspace directory shortly after it's created (within 5 seconds)
 - Each workspace gets its own copy of the secrets file
+- Secrets are automatically loaded on every SSH session (if added to ~/.bashrc)
 
 **Job fails to start with Vault errors:**
 
