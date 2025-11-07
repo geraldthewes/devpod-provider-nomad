@@ -379,26 +379,24 @@ Set as defaults for all workspaces using `devpod provider set-options`:
 
 ```bash
 # Set Vault connection settings
-devpod provider set-options nomad \
-  --option VAULT_ADDR=https://vault.example.com:8200 \
-  --option VAULT_ROLE=nomad-workloads
+devpod provider set-options nomad --option VAULT_ADDR=https://vault.example.com:8200
+devpod provider set-options nomad --option VAULT_ROLE=nomad-workloads
 
-# Set Vault policies (JSON array)
-devpod provider set-options nomad \
-  --option VAULT_POLICIES_JSON='["aws-read","database-read"]'
+# Set Vault policies (JSON array) - IMPORTANT: Use single quotes around JSON
+devpod provider set-options nomad --option 'VAULT_POLICIES_JSON=["aws-read","database-read"]'
 
-# Set Vault secrets configuration (JSON array)
-devpod provider set-options nomad \
-  --option VAULT_SECRETS_JSON='[
-    {
-      "path": "secret/data/aws/credentials",
-      "fields": {
-        "access_key_id": "AWS_ACCESS_KEY_ID",
-        "secret_access_key": "AWS_SECRET_ACCESS_KEY",
-        "region": "AWS_DEFAULT_REGION"
-      }
-    }
-  ]'
+# Set Vault secrets configuration (JSON array) - IMPORTANT: Single-line JSON in single quotes
+devpod provider set-options nomad --option 'VAULT_SECRETS_JSON=[{"path":"secret/data/aws/credentials","fields":{"access_key_id":"AWS_ACCESS_KEY_ID","secret_access_key":"AWS_SECRET_ACCESS_KEY","region":"AWS_DEFAULT_REGION"}}]'
+```
+
+**Important Notes:**
+- Use **single quotes** around JSON values to prevent shell interpretation
+- JSON must be on a **single line** (no newlines)
+- Multiple secrets: separate with commas in the JSON array
+
+**Example with multiple secrets:**
+```bash
+devpod provider set-options nomad --option 'VAULT_SECRETS_JSON=[{"path":"secret/data/aws/creds","fields":{"access_key":"AWS_ACCESS_KEY_ID","secret_key":"AWS_SECRET_ACCESS_KEY"}},{"path":"secret/data/hf/token","fields":{"token":"HF_TOKEN"}}]'
 ```
 
 Verify your configuration:
