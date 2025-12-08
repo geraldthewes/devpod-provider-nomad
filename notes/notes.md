@@ -1458,3 +1458,46 @@ The Problem
 
   All your secrets (both AWS keys and HF_TOKEN) should now be available in the devcontainer! 🎉
 
+Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Manual GitHub Release Plan for devpod-provider-nomad
+
+ Overview
+
+ Manually publish v0.1.5 release since GitHub Actions is failing.
+
+ Steps to Execute
+
+ 1. Build Release Artifacts
+
+ cd /home/gerald/repos/devpod-provider-nomad
+ go mod vendor
+ RELEASE_VERSION=v0.1.5 ./hack/build.sh
+
+ 2. Create and Push Git Tag
+
+ git tag v0.1.5
+ git push origin v0.1.5
+
+ 3. Create GitHub Release with All Artifacts
+
+ gh release create v0.1.5 ./release/* \
+   --title "v0.1.5" \
+   --generate-notes
+
+ What Gets Published
+
+ 11 files from release/ directory:
+ - devpod-provider-nomad-linux-amd64 + .sha256
+ - devpod-provider-nomad-linux-arm64 + .sha256
+ - devpod-provider-nomad-darwin-amd64 + .sha256
+ - devpod-provider-nomad-darwin-arm64 + .sha256
+ - devpod-provider-nomad-windows-amd64.exe + .sha256
+ - provider.yaml (DevPod provider manifest)
+
+ Notes
+
+ - Go cross-compiles all platforms from Linux (no Mac needed)
+ - provider.yaml contains GitHub release URLs matching v0.1.5
+ - --generate-notes creates release notes from commits since v0.1.4
+
