@@ -16,7 +16,17 @@ This project is still a work in progress, excuse our mess! <3
 
 ## Getting Started
 
-1. Install the provider to your local machine
+1. Configure your Nomad address
+
+The provider uses the standard `NOMAD_ADDR` environment variable to connect to your Nomad cluster. Set this before using the provider:
+
+```shell
+export NOMAD_ADDR=http://your-nomad-server:4646
+```
+
+Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) for persistence.
+
+2. Install the provider to your local machine
 
 From Github:
 
@@ -24,7 +34,7 @@ From Github:
 devpod provider add geraldthewes/devpod-provider-nomad
 ```
 
-2. Use the provider
+3. Use the provider
 
 ```shell
 devpod up <repository-url> --provider nomad
