@@ -1,5 +1,5 @@
 name:  nomad
-version: 0.0.1
+version: ##VERSION##
 description: |-
   DevPod on Nomad
 icon: https://url-to-icon.com  # Shown in the Desktop App
