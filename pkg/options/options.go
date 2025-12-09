@@ -92,10 +92,10 @@ func DefaultOptions() (*Options, error) {
 		Token:      "",
 		Namespace:  getEnv("NOMAD_NAMESPACE", ""),
 		Region:     getEnv("NOMAD_REGION", ""),
-		TaskName:   "devpod",
+		TaskName:   getEnv("MACHINE_ID", "devpod"),
 		CPU:        getEnv("NOMAD_CPU", defaultCpu),
 		MemoryMB:   getEnv("NOMAD_MEMORYMB", defaultMemoryMB),
-		JobId:      getEnv("DEVCONTAINER_ID", "devpod"), // set by devpod
+		JobId:      getEnv("MACHINE_ID", "devpod"), // set by devpod for machine providers
 		DriverOpts: runOptions,
 
 		// Vault configuration

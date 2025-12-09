@@ -188,6 +188,7 @@ func (n *Nomad) waitForHealthyAllocation(
 func (n *Nomad) CommandDevContainer(
 	ctx context.Context,
 	jobID string,
+	taskName string,
 	user string,
 	command string,
 	stdin io.Reader,
@@ -197,12 +198,9 @@ func (n *Nomad) CommandDevContainer(
 	ctx, cancelFn := context.WithCancel(ctx)
 	defer cancelFn()
 
-	// TODO: make this an options
-	task := "devpod"
-
 	// Wait for a healthy allocation with the task running
 	// Give it up to 5 minutes to start (image pull, task startup, etc.)
-	alloc, err := n.waitForHealthyAllocation(ctx, jobID, task, 5*time.Minute)
+	alloc, err := n.waitForHealthyAllocation(ctx, jobID, taskName, 5*time.Minute)
 	if err != nil {
 		return -1, err
 	}
@@ -221,6 +219,6 @@ func (n *Nomad) CommandDevContainer(
 	// When running interactive commands, stdin is a real terminal
 	_, isTTY := dockerterm.GetFdInfo(stdin)
 
-	return n.client.Allocations().Exec(ctx, alloc, task, isTTY, []string{"/bin/sh", "-c", command},
+	return n.client.Allocations().Exec(ctx, alloc, taskName, isTTY, []string{"/bin/sh", "-c", command},
 		stdin, stdout, stderr, sizeCh, nil)
 }

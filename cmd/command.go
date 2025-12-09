@@ -49,6 +49,7 @@ func (cmd *CommandCmd) Run(
 
 	code, err := nomad.CommandDevContainer(ctx,
 		options.JobId,
+		options.TaskName,
 		os.Getenv("DEVCONTAINER_USER"),
 		command,
 		os.Stdin,
