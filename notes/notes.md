@@ -1501,3 +1501,114 @@ Here is Claude's plan:
  - provider.yaml contains GitHub release URLs matching v0.1.5
  - --generate-notes creates release notes from commits since v0.1.4
 
+ Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Fix: Container startup fails when no Vault secrets configured
+
+ Problem
+
+ When launching a devpod without Vault secrets, the container never becomes ready because:
+
+ 1. The startup script uses a for loop to process vault secrets:
+ for f in /secrets/vault-*.env; do [ -f "$f" ] && cat "$f" >> ...; done && sleep 2 && touch /tmp/.devpod-ready
+ 2. When no vault secrets exist, the glob /secrets/vault-*.env doesn't match any files, so bash expands it literally. The [ -f "$f" ] test fails (exit code 1).
+ 3. The for loop's exit status is 1, breaking the && chain. The touch /tmp/.devpod-ready never executes.
+ 4. The provider waits forever for /tmp/.devpod-ready which never appears.
+
+ Fix
+
+ File: cmd/create.go (line 63)
+
+ Change the for loop to always succeed by adding || true:
+
+ // Before (broken):
+ for f in /secrets/vault-*.env; do [ -f \"$f\" ] && cat \"$f\" >> ... ; done && sleep 2
+
+ // After (fixed):
+ (for f in /secrets/vault-*.env; do [ -f \"$f\" ] && cat \"$f\" >> ... ; done || true) && sleep 2
+
+ Or alternatively, restructure to be more explicit:
+
+ if ls /secrets/vault-*.env 1>/dev/null 2>&1; then
+   for f in /secrets/vault-*.env; do cat "$f" >> /tmp/devpod-workspaces/.vault-secrets; done
+ fi
+
+ Testing
+
+ 1. Build provider: RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+ 2. Delete existing workspace: devpod delete video-transcription-batch
+ 3. Delete and reinstall provider: devpod provider delete nomad
+ 4. Test without vault secrets: devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+ 5. Verify container becomes ready and devpod connects successfully
+
+
+Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Use workspace name as Nomad task name
+
+ Goal
+
+ Change the Nomad task name from hardcoded "devpod" to use the workspace name (e.g., "vscode-remote-try-node") from DEVCONTAINER_ID.
+
+ Changes
+
+ 1. pkg/options/options.go (line 95)
+
+ Change TaskName to use DEVCONTAINER_ID:
+
+ // Before:
+ TaskName:   "devpod",
+
+ // After:
+ TaskName:   getEnv("DEVCONTAINER_ID", "devpod"),
+
+ 2. pkg/nomad/nomad.go
+
+ Update CommandDevContainer to accept task name as parameter:
+
+ // Before (line 188):
+ func (n *Nomad) CommandDevContainer(
+     ctx context.Context,
+     jobID string,
+     user string,
+     ...
+
+ // After:
+ func (n *Nomad) CommandDevContainer(
+     ctx context.Context,
+     jobID string,
+     taskName string,  // NEW
+     user string,
+     ...
+
+ Remove hardcoded task name (line 201):
+ // Before:
+ task := "devpod"
+
+ // After:
+ // (use taskName parameter instead)
+
+ 3. cmd/command.go (line 50)
+
+ Pass TaskName to CommandDevContainer:
+
+ // Before:
+ code, err := nomad.CommandDevContainer(ctx,
+     options.JobId,
+     os.Getenv("DEVCONTAINER_USER"),
+     ...
+
+ // After:
+ code, err := nomad.CommandDevContainer(ctx,
+     options.JobId,
+     options.TaskName,  // NEW
+     os.Getenv("DEVCONTAINER_USER"),
+     ...
+
+ Testing
+
+ 1. Build: RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+ 2. Reinstall provider
+ 3. Launch workspace and verify Nomad shows correct task name:
+ nomad job status <workspace-name>
+
