@@ -748,6 +748,35 @@ Common issues:
 4. **Monitor access**: Enable Vault audit logging
 5. **Separate policies per workspace**: Use different policies for different projects
 
+## DevPod Context Options
+
+The Nomad provider works with DevPod's global context options. Some useful settings:
+
+### Agent Inject Timeout
+
+DevPod has a default 20-second timeout (`AGENT_INJECT_TIMEOUT`) for injecting the agent into containers. Since the Nomad provider needs to:
+1. Start the Nomad job
+2. Wait for the allocation to become healthy
+3. Install dependencies (curl, git, ca-certificates)
+
+This can sometimes exceed 20 seconds, especially on first launch or when the container image needs to be pulled.
+
+**Increase the timeout if you see "context deadline exceeded" errors:**
+
+```bash
+# Increase to 120 seconds (recommended for Nomad provider)
+devpod context set-options -o AGENT_INJECT_TIMEOUT=120
+
+# Verify the setting
+devpod context options
+```
+
+**When to increase the timeout:**
+- First time launching a workspace (image pull + package installation)
+- Using large container images
+- Slow network conditions
+- Nomad cluster under heavy load
+
 ## Testing Locally
 
 1. Build the provider locally
