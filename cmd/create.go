@@ -102,7 +102,8 @@ func (cmd *CreateCmd) Run(
 		MemoryMB: &mem,
 	}
 
-	jobName := "devpod"
+	// Use the machine ID for job name and task group name
+	jobName := options.JobId
 
 	// Create the base task
 	task := &api.Task{
