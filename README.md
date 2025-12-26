@@ -58,8 +58,23 @@ Nomad job during a workspace creation.
   + description: The memory in mb to use for the Nomad Job
   + default: "512"
 - NOMAD_DISKMB:
-  + description: The ephemeral disk in mb to use for the Nomad Job
+  + description: The disk size in MB (ephemeral disk or CSI volume capacity)
   + default: "300"
+
+#### Persistent Storage Options (CSI)
+
+- NOMAD_STORAGE_MODE:
+  + description: Storage mode - "ephemeral" (default) or "persistent"
+  + default: "ephemeral"
+- NOMAD_CSI_PLUGIN_ID:
+  + description: CSI plugin ID for persistent storage
+  + default: "ceph-csi"
+- NOMAD_CSI_CLUSTER_ID:
+  + description: Ceph cluster ID (required for persistent mode)
+  + default: (none)
+- NOMAD_CSI_POOL:
+  + description: Ceph pool name for CSI volumes
+  + default: "nomad"
 
 #### Setting Resource Options
 
@@ -248,6 +263,161 @@ echo $OLLAMA_HOST
 **Variables work locally but not in DevPod:**
 - DevPod only has access to environment variables that exist when `devpod up` runs
 - Make sure variables are exported in your shell profile and you've restarted your terminal
+
+## Persistent Storage with CSI Volumes
+
+By default, DevPod workspaces use ephemeral storage that is lost when the Nomad job stops. For workspaces where you need data to persist across restarts (e.g., long-running development environments), you can enable persistent storage using CSI volumes.
+
+### How It Works
+
+1. When you set `NOMAD_STORAGE_MODE=persistent`, the provider automatically creates a CSI volume
+2. The volume name is derived from your workspace ID: `devpod-{workspace-id}`
+3. The volume is mounted at `/workspace` in your container
+4. When you delete the workspace, the CSI volume is automatically deleted (no orphaned volumes)
+
+### Prerequisites
+
+- Nomad cluster with CSI plugin configured (e.g., Ceph-CSI, AWS EBS CSI, etc.)
+- CSI plugin registered and healthy in Nomad
+- For Ceph-CSI: cluster ID and pool name
+
+### Quick Start
+
+```bash
+# Launch a workspace with persistent storage
+devpod up github.com/your-org/your-project --provider nomad \
+  --provider-option NOMAD_STORAGE_MODE=persistent \
+  --provider-option NOMAD_CSI_CLUSTER_ID=your-ceph-cluster-id \
+  --provider-option NOMAD_DISKMB=10240
+```
+
+### Setting Persistent Defaults
+
+Configure persistent storage as the default for all workspaces:
+
+```bash
+# Set persistent storage mode
+devpod provider set-options nomad \
+  --option NOMAD_STORAGE_MODE=persistent \
+  --option NOMAD_CSI_CLUSTER_ID=your-ceph-cluster-id \
+  --option NOMAD_CSI_POOL=nomad \
+  --option NOMAD_DISKMB=10240
+
+# Verify configuration
+devpod provider options nomad
+```
+
+### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `NOMAD_STORAGE_MODE` | `ephemeral` | `ephemeral` (data lost on stop) or `persistent` (CSI volume) |
+| `NOMAD_CSI_PLUGIN_ID` | `ceph-csi` | CSI plugin ID registered in your Nomad cluster |
+| `NOMAD_CSI_CLUSTER_ID` | (required) | Ceph cluster ID (required for persistent mode) |
+| `NOMAD_CSI_POOL` | `nomad` | Ceph pool name for volume creation |
+| `NOMAD_DISKMB` | `300` | Volume capacity in MB |
+
+### Example: Ceph-CSI Configuration
+
+**Step 1:** Find your Ceph cluster ID:
+
+```bash
+# Check existing CSI volumes in Nomad
+curl -s http://your-nomad-server:4646/v1/volumes?type=csi | jq '.[0].Parameters.clusterID'
+```
+
+**Step 2:** Configure the provider:
+
+```bash
+devpod provider set-options nomad \
+  --option NOMAD_STORAGE_MODE=persistent \
+  --option NOMAD_CSI_PLUGIN_ID=ceph-csi \
+  --option NOMAD_CSI_CLUSTER_ID=70464857-9ed6-11f0-8df5-d45d64d7d4f0 \
+  --option NOMAD_CSI_POOL=nomad \
+  --option NOMAD_DISKMB=20480
+```
+
+**Step 3:** Launch your workspace:
+
+```bash
+devpod up github.com/your-org/your-project --provider nomad
+```
+
+**Step 4:** Verify the volume was created:
+
+```bash
+# Check Nomad volumes
+curl -s http://your-nomad-server:4646/v1/volumes?type=csi | jq '.[] | select(.ID | startswith("devpod-"))'
+```
+
+### Testing Persistence
+
+```bash
+# Create a workspace with persistent storage
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad \
+  --provider-option NOMAD_STORAGE_MODE=persistent \
+  --provider-option NOMAD_CSI_CLUSTER_ID=your-cluster-id
+
+# SSH in and create a test file
+devpod ssh vscode-remote-try-node
+echo "Hello, persistent storage!" > /workspace/test.txt
+exit
+
+# Stop the workspace
+devpod stop vscode-remote-try-node
+
+# Start it again
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad
+
+# Verify the file persists
+devpod ssh vscode-remote-try-node
+cat /workspace/test.txt  # Should show: Hello, persistent storage!
+```
+
+### Cleanup
+
+When you delete a workspace, the CSI volume is automatically deleted:
+
+```bash
+devpod delete vscode-remote-try-node
+
+# Verify volume was deleted
+curl -s http://your-nomad-server:4646/v1/volumes?type=csi | jq '.[] | select(.ID | startswith("devpod-"))'
+```
+
+### Troubleshooting
+
+**Error: "NOMAD_CSI_CLUSTER_ID is required when NOMAD_STORAGE_MODE is 'persistent'"**
+
+You must provide the Ceph cluster ID for persistent storage:
+
+```bash
+devpod provider set-options nomad \
+  --option NOMAD_CSI_CLUSTER_ID=your-cluster-id
+```
+
+**Volume creation fails:**
+
+1. ✅ Verify the CSI plugin is healthy: `nomad plugin status ceph-csi`
+2. ✅ Check the cluster ID matches your Ceph cluster
+3. ✅ Ensure the pool exists in Ceph
+4. ✅ Check Nomad allocation logs for detailed errors
+
+**Volume not mounting:**
+
+1. ✅ Check the job status: `nomad job status <workspace-id>`
+2. ✅ View allocation events: `nomad alloc status <alloc-id>`
+3. ✅ Verify CSI nodes are healthy: `nomad plugin status ceph-csi`
+
+**Switching between ephemeral and persistent:**
+
+When switching storage modes, you need to delete and recreate the workspace:
+
+```bash
+devpod delete my-workspace
+devpod provider set-options nomad --option NOMAD_STORAGE_MODE=persistent
+devpod up github.com/my-org/my-project --provider nomad
+```
 
 ## Using Private Docker Registries
 
