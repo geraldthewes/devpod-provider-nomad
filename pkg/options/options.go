@@ -36,6 +36,12 @@ type Options struct {
 	VaultChangeMode string
 	VaultPolicies   []string
 	VaultSecrets    []VaultSecret
+
+	// CSI Storage configuration
+	StorageMode  string // "ephemeral" (default) or "persistent"
+	CSIPluginID  string // CSI plugin ID, default "ceph-csi"
+	CSIClusterID string // Ceph cluster ID (required for persistent mode)
+	CSIPool      string // Ceph pool name, default "nomad"
 }
 
 const (
@@ -44,6 +50,15 @@ const (
 	defaultDiskMB          = "300"
 	defaultVaultRole       = "nomad-workloads"
 	defaultVaultChangeMode = "restart"
+
+	// CSI Storage defaults
+	defaultStorageMode = "ephemeral"
+	defaultCSIPluginID = "ceph-csi"
+	defaultCSIPool     = "nomad"
+
+	// Storage mode constants
+	StorageModeEphemeral  = "ephemeral"
+	StorageModePersistent = "persistent"
 )
 
 // Read ENV Vars for option overrides
@@ -105,10 +120,21 @@ func DefaultOptions() (*Options, error) {
 		VaultChangeMode: getEnv("VAULT_CHANGE_MODE", defaultVaultChangeMode),
 		VaultPolicies:   vaultPolicies,
 		VaultSecrets:    vaultSecrets,
+
+		// CSI Storage configuration
+		StorageMode:  getEnv("NOMAD_STORAGE_MODE", defaultStorageMode),
+		CSIPluginID:  getEnv("NOMAD_CSI_PLUGIN_ID", defaultCSIPluginID),
+		CSIClusterID: os.Getenv("NOMAD_CSI_CLUSTER_ID"),
+		CSIPool:      getEnv("NOMAD_CSI_POOL", defaultCSIPool),
 	}
 
 	// Validate Vault configuration
 	if err := opts.ValidateVault(); err != nil {
+		return nil, err
+	}
+
+	// Validate CSI configuration
+	if err := opts.ValidateCSI(); err != nil {
 		return nil, err
 	}
 
@@ -170,4 +196,29 @@ func (o *Options) ValidateVault() error {
 	}
 
 	return nil
+}
+
+// ValidateCSI validates CSI storage configuration settings
+func (o *Options) ValidateCSI() error {
+	// Validate storage mode value
+	if o.StorageMode != StorageModeEphemeral && o.StorageMode != StorageModePersistent {
+		return fmt.Errorf("invalid NOMAD_STORAGE_MODE: %s (must be 'ephemeral' or 'persistent')", o.StorageMode)
+	}
+
+	// If persistent mode, require cluster ID
+	if o.StorageMode == StorageModePersistent {
+		if o.CSIClusterID == "" {
+			return fmt.Errorf("NOMAD_CSI_CLUSTER_ID is required when NOMAD_STORAGE_MODE is 'persistent'")
+		}
+		if o.CSIPluginID == "" {
+			return fmt.Errorf("NOMAD_CSI_PLUGIN_ID is required when NOMAD_STORAGE_MODE is 'persistent'")
+		}
+	}
+
+	return nil
+}
+
+// GetVolumeID returns the CSI volume ID for this workspace
+func (o *Options) GetVolumeID() string {
+	return "devpod-" + o.JobId
 }

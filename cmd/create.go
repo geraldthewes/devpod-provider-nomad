@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/briancain/devpod-provider-nomad/pkg/nomad"
-	"github.com/briancain/devpod-provider-nomad/pkg/options"
+	opts "github.com/briancain/devpod-provider-nomad/pkg/options"
 	"github.com/hashicorp/nomad/api"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +28,7 @@ func NewCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a new devpod instance on Nomad",
 		RunE: func(_ *cobra.Command, args []string) error {
-			options, err := options.FromEnv()
+			options, err := opts.FromEnv()
 			if err != nil {
 				return err
 			}
@@ -41,9 +42,9 @@ func NewCreateCmd() *cobra.Command {
 
 func (cmd *CreateCmd) Run(
 	ctx context.Context,
-	options *options.Options,
+	options *opts.Options,
 ) error {
-	nomad, err := nomad.NewNomad(options)
+	nomadClient, err := nomad.NewNomad(options)
 	if err != nil {
 		return err
 	}
@@ -97,6 +98,36 @@ func (cmd *CreateCmd) Run(
 		return err
 	}
 
+	// For persistent storage, create CSI volume if it doesn't exist
+	var volumeID string
+	if options.StorageMode == opts.StorageModePersistent {
+		volumeID = options.GetVolumeID()
+
+		// Convert MB to bytes for CSI volume capacity
+		capacityBytes := int64(disk) * 1024 * 1024
+
+		// Check if volume already exists
+		exists, err := nomadClient.VolumeExists(ctx, volumeID, options.Namespace)
+		if err != nil {
+			return fmt.Errorf("failed to check if volume exists: %w", err)
+		}
+
+		if !exists {
+			err = nomadClient.CreateCSIVolume(
+				ctx,
+				volumeID,
+				capacityBytes,
+				options.CSIPluginID,
+				options.CSIClusterID,
+				options.CSIPool,
+				options.Namespace,
+			)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	jobResources := &api.Resources{
 		CPU:      &cpu,
 		MemoryMB: &mem,
@@ -105,26 +136,31 @@ func (cmd *CreateCmd) Run(
 	// Use the machine ID for job name and task group name
 	jobName := options.JobId
 
+	// Build Docker volumes list
+	// Mount Docker socket from host for Docker-in-Docker support
+	// Mount Docker registry certificates for Docker daemon
+	// Mount CA certificate source file so update-ca-certificates includes it
+	dockerVolumes := []string{
+		"/var/run/docker.sock:/var/run/docker.sock",
+		"/etc/docker/certs.d:/etc/docker/certs.d:ro",
+		"/usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro",
+	}
+
+	// Only add the shared workspace bind mount for ephemeral mode
+	// For persistent mode, the CSI volume is mounted by Nomad
+	if options.StorageMode != opts.StorageModePersistent {
+		dockerVolumes = append(dockerVolumes, sharedWorkspacePath+":"+sharedWorkspacePath)
+	}
+
 	// Create the base task
 	task := &api.Task{
 		Name: options.TaskName,
 		User: user,
 		Env:  env,
 		Config: map[string]interface{}{
-			"image": image,
-			"args":  runCmd,
-			// Mount Docker socket from host for Docker-in-Docker support
-			// Mount workspace directory at the SAME path on host and container
-			// This is critical: when DevPod tells Docker to bind mount paths,
-			// Docker needs to find them on the host at the same path
-			// Mount Docker registry certificates for Docker daemon
-			// Mount CA certificate source file so update-ca-certificates includes it
-			"volumes": []string{
-				"/var/run/docker.sock:/var/run/docker.sock",
-				sharedWorkspacePath + ":" + sharedWorkspacePath,
-				"/etc/docker/certs.d:/etc/docker/certs.d:ro",
-				"/usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro",
-			},
+			"image":        image,
+			"args":         runCmd,
+			"volumes":      dockerVolumes,
 			"privileged":   true,
 			"network_mode": "bridge",
 		},
@@ -151,23 +187,55 @@ func (cmd *CreateCmd) Run(
 		task.Templates = generateVaultTemplates(options.VaultSecrets, options.VaultChangeMode)
 	}
 
-	job := &api.Job{
-		ID:        &options.JobId,
-		Name:      &jobName,
-		Namespace: &options.Namespace,
-		Region:    &options.Region,
-		TaskGroups: []*api.TaskGroup{
-			{
-				Name: &jobName,
-				EphemeralDisk: &api.EphemeralDisk{
-					SizeMB: &disk,
-				},
-				Tasks: []*api.Task{task},
-			},
-		},
+	// Build task group with appropriate storage configuration
+	taskGroup := &api.TaskGroup{
+		Name:  &jobName,
+		Tasks: []*api.Task{task},
 	}
 
-	_, err = nomad.Create(ctx, job)
+	if options.StorageMode == opts.StorageModePersistent {
+		// Use CSI volume for persistent storage
+		volumeName := "workspace"
+		persistentMountPath := "/workspace"
+		readOnly := false
+
+		taskGroup.Volumes = map[string]*api.VolumeRequest{
+			volumeName: {
+				Name:           volumeName,
+				Type:           "csi",
+				Source:         volumeID,
+				AccessMode:     string(api.CSIVolumeAccessModeSingleNodeWriter),
+				AttachmentMode: string(api.CSIVolumeAttachmentModeFilesystem),
+				MountOptions: &api.CSIMountOptions{
+					FSType: "ext4",
+				},
+			},
+		}
+
+		// Add volume mount to task
+		task.VolumeMounts = []*api.VolumeMount{
+			{
+				Volume:      &volumeName,
+				Destination: &persistentMountPath,
+				ReadOnly:    &readOnly,
+			},
+		}
+	} else {
+		// Use ephemeral disk for non-persistent storage
+		taskGroup.EphemeralDisk = &api.EphemeralDisk{
+			SizeMB: &disk,
+		}
+	}
+
+	job := &api.Job{
+		ID:         &options.JobId,
+		Name:       &jobName,
+		Namespace:  &options.Namespace,
+		Region:     &options.Region,
+		TaskGroups: []*api.TaskGroup{taskGroup},
+	}
+
+	_, err = nomadClient.Create(ctx, job)
 	if err != nil {
 		return err
 	}
@@ -176,7 +244,7 @@ func (cmd *CreateCmd) Run(
 }
 
 // generateVaultTemplates creates Nomad template stanzas for Vault secrets
-func generateVaultTemplates(secrets []options.VaultSecret, changeMode string) []*api.Template {
+func generateVaultTemplates(secrets []opts.VaultSecret, changeMode string) []*api.Template {
 	if len(secrets) == 0 {
 		return nil
 	}
@@ -197,7 +265,7 @@ func generateVaultTemplates(secrets []options.VaultSecret, changeMode string) []
 }
 
 // generateSecretTemplate creates a Nomad template string for a single Vault secret
-func generateSecretTemplate(secret options.VaultSecret) string {
+func generateSecretTemplate(secret opts.VaultSecret) string {
 	template := "{{- with secret \"" + secret.Path + "\" -}}\n"
 
 	for vaultField, envVar := range secret.Fields {

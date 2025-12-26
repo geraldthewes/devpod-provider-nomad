@@ -222,3 +222,138 @@ func (n *Nomad) CommandDevContainer(
 	return n.client.Allocations().Exec(ctx, alloc, taskName, isTTY, []string{"/bin/sh", "-c", command},
 		stdin, stdout, stderr, sizeCh, nil)
 }
+
+// VolumeExists checks if a CSI volume exists
+func (n *Nomad) VolumeExists(ctx context.Context, volumeID string, namespace string) (bool, error) {
+	logger := log.Default.ErrorStreamOnly()
+
+	queryOpts := &api.QueryOptions{
+		Namespace: namespace,
+	}
+
+	_, _, err := n.client.CSIVolumes().Info(volumeID, queryOpts)
+	if err != nil {
+		// Check if it's a "not found" error
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+			return false, nil
+		}
+		logger.Debugf("Error checking volume %s: %v", volumeID, err)
+		return false, err
+	}
+
+	return true, nil
+}
+
+// CreateCSIVolume creates a new CSI volume for a DevPod workspace
+func (n *Nomad) CreateCSIVolume(
+	ctx context.Context,
+	volumeID string,
+	capacityBytes int64,
+	pluginID string,
+	clusterID string,
+	pool string,
+	namespace string,
+) error {
+	logger := log.Default.ErrorStreamOnly()
+	logger.Infof("Creating CSI volume %s with capacity %d bytes", volumeID, capacityBytes)
+
+	vol := &api.CSIVolume{
+		ID:        volumeID,
+		Name:      volumeID,
+		Namespace: namespace,
+		PluginID:  pluginID,
+
+		RequestedCapacityMin: capacityBytes,
+		RequestedCapacityMax: capacityBytes,
+
+		AccessMode:     api.CSIVolumeAccessModeSingleNodeWriter,
+		AttachmentMode: api.CSIVolumeAttachmentModeFilesystem,
+
+		MountOptions: &api.CSIMountOptions{
+			FSType: "ext4",
+		},
+
+		RequestedCapabilities: []*api.CSIVolumeCapability{
+			{
+				AccessMode:     api.CSIVolumeAccessModeSingleNodeWriter,
+				AttachmentMode: api.CSIVolumeAttachmentModeFilesystem,
+			},
+		},
+
+		// Ceph-CSI specific parameters
+		Parameters: map[string]string{
+			"clusterID":                 clusterID,
+			"pool":                      pool,
+			"csi.storage.k8s.io/fstype": "ext4",
+			"imageFeatures":             "layering",
+		},
+	}
+
+	writeOpts := &api.WriteOptions{
+		Namespace: namespace,
+	}
+
+	_, _, err := n.client.CSIVolumes().Create(vol, writeOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create CSI volume %s: %w", volumeID, err)
+	}
+
+	logger.Infof("Successfully created CSI volume %s", volumeID)
+	return nil
+}
+
+// DeleteCSIVolume deletes a CSI volume
+func (n *Nomad) DeleteCSIVolume(ctx context.Context, volumeID string, namespace string) error {
+	logger := log.Default.ErrorStreamOnly()
+	logger.Infof("Deleting CSI volume %s", volumeID)
+
+	queryOpts := &api.QueryOptions{
+		Namespace: namespace,
+	}
+	writeOpts := &api.WriteOptions{
+		Namespace: namespace,
+	}
+
+	// First get the volume info to find the ExternalID (needed for deletion from storage provider)
+	vol, _, err := n.client.CSIVolumes().Info(volumeID, queryOpts)
+	if err != nil {
+		// If volume not found, that's okay - it might already be deleted
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+			logger.Debugf("Volume %s not found, may already be deleted", volumeID)
+			return nil
+		}
+		return fmt.Errorf("failed to get CSI volume info %s: %w", volumeID, err)
+	}
+
+	externalID := vol.ExternalID
+
+	// Deregister the volume from Nomad (force=true to remove even if in use)
+	err = n.client.CSIVolumes().Deregister(volumeID, true, writeOpts)
+	if err != nil {
+		// If volume not found, that's okay - it might already be deregistered
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+			logger.Debugf("Volume %s not found during deregister, may already be deleted", volumeID)
+		} else {
+			logger.Warnf("Failed to deregister CSI volume %s: %v", volumeID, err)
+		}
+	}
+
+	// Delete the volume from the storage provider using the ExternalID
+	if externalID != "" {
+		deleteReq := &api.CSIVolumeDeleteRequest{
+			ExternalVolumeID: externalID,
+		}
+		err = n.client.CSIVolumes().DeleteOpts(deleteReq, writeOpts)
+		if err != nil {
+			// If volume not found, that's okay
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+				logger.Debugf("Volume %s not found during delete, may already be deleted", volumeID)
+				return nil
+			}
+			return fmt.Errorf("failed to delete CSI volume %s: %w", volumeID, err)
+		}
+	}
+
+	logger.Infof("Successfully deleted CSI volume %s", volumeID)
+	return nil
+}
