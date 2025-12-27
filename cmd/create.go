@@ -86,6 +86,55 @@ func (cmd *CreateCmd) Run(
 		}
 	} // err if nil?
 
+	// For persistent storage mode, modify runCmd to sync between /persistent and /tmp/devpod-workspaces
+	if options.StorageMode == opts.StorageModePersistent {
+		// Build a command that:
+		// 1. Installs rsync
+		// 2. Restores data from /persistent to /tmp/devpod-workspaces on startup
+		// 3. Runs background sync every 60 seconds
+		// 4. Sets up exit trap for final sync
+		runCmd = []string{"/bin/sh", "-c", `
+mkdir -p /tmp/devpod-workspaces /persistent
+
+# Install rsync for efficient syncing
+apt-get update -qq && apt-get install -y -qq curl git ca-certificates rsync && update-ca-certificates
+
+# Restore from persistent storage if it has data
+if [ -d /persistent/agent ] && [ "$(ls -A /persistent/agent 2>/dev/null)" ]; then
+  echo "Restoring workspace from persistent storage..."
+  rsync -a /persistent/ /tmp/devpod-workspaces/
+fi
+
+# Combine vault secrets
+for f in /secrets/vault-*.env; do [ -f "$f" ] && cat "$f" >> /tmp/devpod-workspaces/.vault-secrets; done || true
+
+# Mark as ready
+sleep 2 && touch /tmp/.devpod-ready
+
+# Background process: copy secrets to workspace content directories
+(while true; do
+  find /tmp/devpod-workspaces/agent/contexts/*/workspaces/*/content -maxdepth 0 -type d 2>/dev/null | while read wsdir; do
+    if [ -f /tmp/devpod-workspaces/.vault-secrets ] && [ ! -f "$wsdir/.vault-secrets" ]; then
+      cp /tmp/devpod-workspaces/.vault-secrets "$wsdir/.vault-secrets" && chmod 644 "$wsdir/.vault-secrets"
+    fi
+  done
+  sleep 5
+done) &
+
+# Background process: sync to persistent storage every 60 seconds
+(while true; do
+  sleep 60
+  rsync -a --delete /tmp/devpod-workspaces/ /persistent/ 2>/dev/null || true
+done) &
+
+# Set up exit trap for final sync
+trap 'echo "Syncing to persistent storage..."; rsync -a --delete /tmp/devpod-workspaces/ /persistent/' EXIT
+
+# Keep container running
+sleep infinity
+`}
+	}
+
 	cpu, err := strconv.Atoi(options.CPU)
 	if err != nil {
 		return err
@@ -154,11 +203,10 @@ func (cmd *CreateCmd) Run(
 		"/usr/local/share/ca-certificates/registry.cluster.crt:/usr/local/share/ca-certificates/registry.cluster.crt:ro",
 	}
 
-	// Only add the shared workspace bind mount for ephemeral mode
-	// For persistent mode, the CSI volume is mounted by Nomad
-	if options.StorageMode != opts.StorageModePersistent {
-		dockerVolumes = append(dockerVolumes, sharedWorkspacePath+":"+sharedWorkspacePath)
-	}
+	// Always include host bind mount for Docker-in-Docker compatibility
+	// Docker looks for bind mount paths on the HOST, so we need this path to exist on the host
+	// For persistent mode, we sync data between this path and the CSI volume at /persistent
+	dockerVolumes = append(dockerVolumes, sharedWorkspacePath+":"+sharedWorkspacePath)
 
 	// Create the base task
 	task := &api.Task{
@@ -203,9 +251,9 @@ func (cmd *CreateCmd) Run(
 
 	if options.StorageMode == opts.StorageModePersistent {
 		// Use CSI volume for persistent storage
-		// Mount at the same path DevPod expects for workspaces
+		// Mount at /persistent, sync with /tmp/devpod-workspaces for Docker-in-Docker compatibility
 		volumeName := "workspace"
-		persistentMountPath := sharedWorkspacePath // /tmp/devpod-workspaces
+		persistentMountPath := "/persistent"
 		readOnly := false
 
 		taskGroup.Volumes = map[string]*api.VolumeRequest{
