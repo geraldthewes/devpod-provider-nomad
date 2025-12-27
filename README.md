@@ -284,7 +284,7 @@ By default, DevPod workspaces use ephemeral storage that is lost when the Nomad 
 - CSI plugin registered and healthy in Nomad
 - For Ceph-CSI: cluster ID and pool name
 - HashiCorp Vault with CSI credentials stored (userID and userKey for Ceph)
-- VAULT_TOKEN environment variable set for authenticating to Vault
+- DEVPOD_VAULT_TOKEN environment variable set for authenticating to Vault
 
 ### Quick Start
 
@@ -300,7 +300,7 @@ vault kv put secret/ceph/csi \
 **Step 2:** Set your Vault token:
 
 ```bash
-export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+export DEVPOD_VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
 ```
 
 **Step 3:** Launch a workspace with persistent storage:
@@ -332,7 +332,7 @@ devpod provider set-options nomad \
 devpod provider options nomad
 ```
 
-**Note:** You still need to set `VAULT_TOKEN` in your environment before running `devpod up`.
+**Note:** You still need to set `DEVPOD_VAULT_TOKEN` in your environment before running `devpod up`.
 
 ### Configuration Options
 
@@ -349,7 +349,7 @@ devpod provider options nomad
 **Environment Variables:**
 | Variable | Description |
 |----------|-------------|
-| `VAULT_TOKEN` | Vault token for authenticating to fetch CSI credentials (must be set in environment) |
+| `DEVPOD_VAULT_TOKEN` | Vault token for authenticating to fetch CSI credentials (must be set in environment) |
 
 ### Example: Ceph-CSI Configuration
 
@@ -388,7 +388,7 @@ devpod provider set-options nomad \
 **Step 4:** Set your Vault token and launch:
 
 ```bash
-export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+export DEVPOD_VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
 devpod up github.com/your-org/your-project --provider nomad
 ```
 
@@ -402,8 +402,8 @@ curl -s http://your-nomad-server:4646/v1/volumes?type=csi | jq '.[] | select(.ID
 ### Testing Persistence
 
 ```bash
-# Ensure VAULT_TOKEN is set
-export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+# Ensure DEVPOD_VAULT_TOKEN is set
+export DEVPOD_VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
 
 # Create a workspace with persistent storage
 devpod up github.com/microsoft/vscode-remote-try-node --provider nomad \
@@ -459,12 +459,12 @@ devpod provider set-options nomad \
   --option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi
 ```
 
-**Error: "VAULT_TOKEN environment variable is required for fetching CSI secrets"**
+**Error: "DEVPOD_VAULT_TOKEN environment variable is required for fetching CSI secrets"**
 
 Set your Vault token in the environment:
 
 ```bash
-export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+export DEVPOD_VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
 ```
 
 **Error: "failed to read secret from secret/data/ceph/csi: ... permission denied"**

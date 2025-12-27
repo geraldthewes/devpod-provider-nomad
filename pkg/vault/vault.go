@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/hashicorp/vault/api"
 )
@@ -85,18 +86,7 @@ func (c *Client) ReadCSISecrets(path string) (*CSISecrets, error) {
 	}, nil
 }
 
-// GetNomadToken attempts to get a Vault token using Nomad workload identity
-// This uses the VAULT_TOKEN environment variable if set, otherwise returns empty
+// GetTokenFromEnv reads the Vault token from DEVPOD_VAULT_TOKEN environment variable
 func GetTokenFromEnv() string {
-	// Check for explicit token first
-	config := api.DefaultConfig()
-	if config.Error != nil {
-		return ""
-	}
-	// The DefaultConfig reads VAULT_TOKEN from environment
-	client, err := api.NewClient(config)
-	if err != nil {
-		return ""
-	}
-	return client.Token()
+	return os.Getenv("DEVPOD_VAULT_TOKEN")
 }

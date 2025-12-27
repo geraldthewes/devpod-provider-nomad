@@ -297,10 +297,10 @@ func fetchCSISecretsFromVault(options *opts.Options) (*nomad.CSISecrets, error) 
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
 	}
 
-	// Get token from environment (VAULT_TOKEN)
+	// Get token from environment (DEVPOD_VAULT_TOKEN)
 	token := vault.GetTokenFromEnv()
 	if token == "" {
-		return nil, fmt.Errorf("VAULT_TOKEN environment variable is required for fetching CSI secrets")
+		return nil, fmt.Errorf("DEVPOD_VAULT_TOKEN environment variable is required for fetching CSI secrets")
 	}
 	vaultClient.SetToken(token)
 
