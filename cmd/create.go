@@ -203,8 +203,9 @@ func (cmd *CreateCmd) Run(
 
 	if options.StorageMode == opts.StorageModePersistent {
 		// Use CSI volume for persistent storage
+		// Mount at the same path DevPod expects for workspaces
 		volumeName := "workspace"
-		persistentMountPath := "/workspace"
+		persistentMountPath := sharedWorkspacePath // /tmp/devpod-workspaces
 		readOnly := false
 
 		taskGroup.Volumes = map[string]*api.VolumeRequest{
