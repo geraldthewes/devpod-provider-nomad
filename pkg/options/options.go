@@ -42,6 +42,7 @@ type Options struct {
 	CSIPluginID  string // CSI plugin ID, default "ceph-csi"
 	CSIClusterID string // Ceph cluster ID (required for persistent mode)
 	CSIPool      string // Ceph pool name, default "nomad"
+	CSIVaultPath string // Vault path for CSI credentials (e.g., "secret/data/ceph/csi")
 }
 
 const (
@@ -126,6 +127,7 @@ func DefaultOptions() (*Options, error) {
 		CSIPluginID:  getEnv("NOMAD_CSI_PLUGIN_ID", defaultCSIPluginID),
 		CSIClusterID: os.Getenv("NOMAD_CSI_CLUSTER_ID"),
 		CSIPool:      getEnv("NOMAD_CSI_POOL", defaultCSIPool),
+		CSIVaultPath: os.Getenv("NOMAD_CSI_VAULT_PATH"),
 	}
 
 	// Validate Vault configuration
@@ -205,13 +207,19 @@ func (o *Options) ValidateCSI() error {
 		return fmt.Errorf("invalid NOMAD_STORAGE_MODE: %s (must be 'ephemeral' or 'persistent')", o.StorageMode)
 	}
 
-	// If persistent mode, require cluster ID
+	// If persistent mode, require cluster ID and Vault path for CSI secrets
 	if o.StorageMode == StorageModePersistent {
 		if o.CSIClusterID == "" {
 			return fmt.Errorf("NOMAD_CSI_CLUSTER_ID is required when NOMAD_STORAGE_MODE is 'persistent'")
 		}
 		if o.CSIPluginID == "" {
 			return fmt.Errorf("NOMAD_CSI_PLUGIN_ID is required when NOMAD_STORAGE_MODE is 'persistent'")
+		}
+		if o.CSIVaultPath == "" {
+			return fmt.Errorf("NOMAD_CSI_VAULT_PATH is required when NOMAD_STORAGE_MODE is 'persistent' (Vault path containing 'userID' and 'userKey' for Ceph CSI)")
+		}
+		if o.VaultAddr == "" {
+			return fmt.Errorf("VAULT_ADDR is required when NOMAD_STORAGE_MODE is 'persistent' (needed to fetch CSI credentials)")
 		}
 	}
 

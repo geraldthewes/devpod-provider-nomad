@@ -62,6 +62,36 @@ options:
       Example: [{"path":"secret/data/aws/creds","fields":{"access_key":"AWS_ACCESS_KEY_ID","secret_key":"AWS_SECRET_ACCESS_KEY"}}]
       Secrets are injected as environment variables into the container.
     default:
+  NOMAD_STORAGE_MODE:
+    description: |-
+      Storage mode for the workspace: "ephemeral" (default) or "persistent".
+      Ephemeral: Uses Nomad's ephemeral disk (data lost when job stops).
+      Persistent: Uses CSI volumes (data persists across job restarts).
+      When using persistent mode, NOMAD_CSI_CLUSTER_ID is required.
+    default: "ephemeral"
+  NOMAD_CSI_PLUGIN_ID:
+    description: |-
+      CSI plugin ID for persistent storage.
+      This should match the plugin ID registered in your Nomad cluster.
+    default: "ceph-csi"
+  NOMAD_CSI_CLUSTER_ID:
+    description: |-
+      Ceph cluster ID for CSI volumes.
+      Required when NOMAD_STORAGE_MODE is "persistent".
+      Example: 70464857-9ed6-11f0-8df5-d45d64d7d4f0
+    default:
+  NOMAD_CSI_POOL:
+    description: |-
+      Ceph pool name for CSI volumes.
+      Used when NOMAD_STORAGE_MODE is "persistent".
+    default: "nomad"
+  NOMAD_CSI_VAULT_PATH:
+    description: |-
+      Vault KV v2 path containing CSI credentials for Ceph.
+      The secret must contain 'userID' and 'userKey' fields.
+      Example: secret/data/ceph/csi
+      Required when NOMAD_STORAGE_MODE is "persistent".
+    default:
 agent:
   path: ${AGENT_PATH}
   dataPath: ${AGENT_DATA_PATH}

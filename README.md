@@ -75,6 +75,9 @@ Nomad job during a workspace creation.
 - NOMAD_CSI_POOL:
   + description: Ceph pool name for CSI volumes
   + default: "nomad"
+- NOMAD_CSI_VAULT_PATH:
+  + description: Vault KV v2 path containing CSI credentials (userID and userKey)
+  + default: (none, required for persistent mode)
 
 #### Setting Resource Options
 
@@ -280,14 +283,34 @@ By default, DevPod workspaces use ephemeral storage that is lost when the Nomad 
 - Nomad cluster with CSI plugin configured (e.g., Ceph-CSI, AWS EBS CSI, etc.)
 - CSI plugin registered and healthy in Nomad
 - For Ceph-CSI: cluster ID and pool name
+- HashiCorp Vault with CSI credentials stored (userID and userKey for Ceph)
+- VAULT_TOKEN environment variable set for authenticating to Vault
 
 ### Quick Start
 
+**Step 1:** Store CSI credentials in Vault:
+
 ```bash
-# Launch a workspace with persistent storage
+# Store Ceph admin credentials in Vault KV v2
+vault kv put secret/ceph/csi \
+  userID="admin" \
+  userKey="AQBxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=="
+```
+
+**Step 2:** Set your Vault token:
+
+```bash
+export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+```
+
+**Step 3:** Launch a workspace with persistent storage:
+
+```bash
 devpod up github.com/your-org/your-project --provider nomad \
   --provider-option NOMAD_STORAGE_MODE=persistent \
   --provider-option NOMAD_CSI_CLUSTER_ID=your-ceph-cluster-id \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi \
   --provider-option NOMAD_DISKMB=10240
 ```
 
@@ -296,16 +319,20 @@ devpod up github.com/your-org/your-project --provider nomad \
 Configure persistent storage as the default for all workspaces:
 
 ```bash
-# Set persistent storage mode
+# Set persistent storage mode with Vault integration
 devpod provider set-options nomad \
   --option NOMAD_STORAGE_MODE=persistent \
   --option NOMAD_CSI_CLUSTER_ID=your-ceph-cluster-id \
   --option NOMAD_CSI_POOL=nomad \
+  --option VAULT_ADDR=https://vault.example.com:8200 \
+  --option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi \
   --option NOMAD_DISKMB=10240
 
 # Verify configuration
 devpod provider options nomad
 ```
+
+**Note:** You still need to set `VAULT_TOKEN` in your environment before running `devpod up`.
 
 ### Configuration Options
 
@@ -315,7 +342,14 @@ devpod provider options nomad
 | `NOMAD_CSI_PLUGIN_ID` | `ceph-csi` | CSI plugin ID registered in your Nomad cluster |
 | `NOMAD_CSI_CLUSTER_ID` | (required) | Ceph cluster ID (required for persistent mode) |
 | `NOMAD_CSI_POOL` | `nomad` | Ceph pool name for volume creation |
+| `NOMAD_CSI_VAULT_PATH` | (required) | Vault KV v2 path with CSI credentials (`userID`, `userKey`) |
+| `VAULT_ADDR` | (required) | Vault server address for fetching CSI credentials |
 | `NOMAD_DISKMB` | `300` | Volume capacity in MB |
+
+**Environment Variables:**
+| Variable | Description |
+|----------|-------------|
+| `VAULT_TOKEN` | Vault token for authenticating to fetch CSI credentials (must be set in environment) |
 
 ### Example: Ceph-CSI Configuration
 
@@ -326,7 +360,19 @@ devpod provider options nomad
 curl -s http://your-nomad-server:4646/v1/volumes?type=csi | jq '.[0].Parameters.clusterID'
 ```
 
-**Step 2:** Configure the provider:
+**Step 2:** Store Ceph credentials in Vault:
+
+```bash
+# Get the Ceph admin key from your Ceph cluster
+ceph auth get-key client.admin
+
+# Store in Vault KV v2
+vault kv put secret/ceph/csi \
+  userID="admin" \
+  userKey="AQBxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=="
+```
+
+**Step 3:** Configure the provider:
 
 ```bash
 devpod provider set-options nomad \
@@ -334,16 +380,19 @@ devpod provider set-options nomad \
   --option NOMAD_CSI_PLUGIN_ID=ceph-csi \
   --option NOMAD_CSI_CLUSTER_ID=70464857-9ed6-11f0-8df5-d45d64d7d4f0 \
   --option NOMAD_CSI_POOL=nomad \
+  --option VAULT_ADDR=https://vault.example.com:8200 \
+  --option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi \
   --option NOMAD_DISKMB=20480
 ```
 
-**Step 3:** Launch your workspace:
+**Step 4:** Set your Vault token and launch:
 
 ```bash
+export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
 devpod up github.com/your-org/your-project --provider nomad
 ```
 
-**Step 4:** Verify the volume was created:
+**Step 5:** Verify the volume was created:
 
 ```bash
 # Check Nomad volumes
@@ -353,10 +402,15 @@ curl -s http://your-nomad-server:4646/v1/volumes?type=csi | jq '.[] | select(.ID
 ### Testing Persistence
 
 ```bash
+# Ensure VAULT_TOKEN is set
+export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+
 # Create a workspace with persistent storage
 devpod up github.com/microsoft/vscode-remote-try-node --provider nomad \
   --provider-option NOMAD_STORAGE_MODE=persistent \
-  --provider-option NOMAD_CSI_CLUSTER_ID=your-cluster-id
+  --provider-option NOMAD_CSI_CLUSTER_ID=your-cluster-id \
+  --provider-option VAULT_ADDR=https://vault.example.com:8200 \
+  --provider-option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi
 
 # SSH in and create a test file
 devpod ssh vscode-remote-try-node
@@ -396,12 +450,36 @@ devpod provider set-options nomad \
   --option NOMAD_CSI_CLUSTER_ID=your-cluster-id
 ```
 
+**Error: "NOMAD_CSI_VAULT_PATH is required when NOMAD_STORAGE_MODE is 'persistent'"**
+
+You must provide the Vault path containing CSI credentials:
+
+```bash
+devpod provider set-options nomad \
+  --option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi
+```
+
+**Error: "VAULT_TOKEN environment variable is required for fetching CSI secrets"**
+
+Set your Vault token in the environment:
+
+```bash
+export VAULT_TOKEN="hvs.xxxxxxxxxxxxxxxxxxxxx"
+```
+
+**Error: "failed to read secret from secret/data/ceph/csi: ... permission denied"**
+
+Your Vault token doesn't have access to the CSI credentials path. Ensure:
+1. The secret exists at the specified path
+2. Your token has a policy granting read access to the path
+
 **Volume creation fails:**
 
 1. ✅ Verify the CSI plugin is healthy: `nomad plugin status ceph-csi`
 2. ✅ Check the cluster ID matches your Ceph cluster
 3. ✅ Ensure the pool exists in Ceph
-4. ✅ Check Nomad allocation logs for detailed errors
+4. ✅ Verify Vault credentials are correct (userID and userKey)
+5. ✅ Check Nomad allocation logs for detailed errors
 
 **Volume not mounting:**
 

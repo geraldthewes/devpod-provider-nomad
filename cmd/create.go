@@ -7,6 +7,7 @@ import (
 
 	"github.com/briancain/devpod-provider-nomad/pkg/nomad"
 	opts "github.com/briancain/devpod-provider-nomad/pkg/options"
+	"github.com/briancain/devpod-provider-nomad/pkg/vault"
 	"github.com/hashicorp/nomad/api"
 	"github.com/spf13/cobra"
 )
@@ -113,6 +114,12 @@ func (cmd *CreateCmd) Run(
 		}
 
 		if !exists {
+			// Fetch CSI secrets from Vault
+			csiSecrets, err := fetchCSISecretsFromVault(options)
+			if err != nil {
+				return fmt.Errorf("failed to fetch CSI secrets from Vault: %w", err)
+			}
+
 			err = nomadClient.CreateCSIVolume(
 				ctx,
 				volumeID,
@@ -121,6 +128,7 @@ func (cmd *CreateCmd) Run(
 				options.CSIClusterID,
 				options.CSIPool,
 				options.Namespace,
+				csiSecrets,
 			)
 			if err != nil {
 				return err
@@ -279,4 +287,31 @@ func generateSecretTemplate(secret opts.VaultSecret) string {
 // boolPtr returns a pointer to a bool value
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// fetchCSISecretsFromVault fetches CSI credentials from Vault
+func fetchCSISecretsFromVault(options *opts.Options) (*nomad.CSISecrets, error) {
+	// Create Vault client
+	vaultClient, err := vault.NewClient(options.VaultAddr, options.VaultNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Vault client: %w", err)
+	}
+
+	// Get token from environment (VAULT_TOKEN)
+	token := vault.GetTokenFromEnv()
+	if token == "" {
+		return nil, fmt.Errorf("VAULT_TOKEN environment variable is required for fetching CSI secrets")
+	}
+	vaultClient.SetToken(token)
+
+	// Fetch CSI secrets from Vault
+	secrets, err := vaultClient.ReadCSISecrets(options.CSIVaultPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &nomad.CSISecrets{
+		UserID:  secrets.UserID,
+		UserKey: secrets.UserKey,
+	}, nil
 }

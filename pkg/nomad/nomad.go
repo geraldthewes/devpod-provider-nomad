@@ -244,6 +244,12 @@ func (n *Nomad) VolumeExists(ctx context.Context, volumeID string, namespace str
 	return true, nil
 }
 
+// CSISecrets contains the credentials needed for Ceph CSI volume operations
+type CSISecrets struct {
+	UserID  string
+	UserKey string
+}
+
 // CreateCSIVolume creates a new CSI volume for a DevPod workspace
 func (n *Nomad) CreateCSIVolume(
 	ctx context.Context,
@@ -253,6 +259,7 @@ func (n *Nomad) CreateCSIVolume(
 	clusterID string,
 	pool string,
 	namespace string,
+	secrets *CSISecrets,
 ) error {
 	logger := log.Default.ErrorStreamOnly()
 	logger.Infof("Creating CSI volume %s with capacity %d bytes", volumeID, capacityBytes)
@@ -287,6 +294,14 @@ func (n *Nomad) CreateCSIVolume(
 			"csi.storage.k8s.io/fstype": "ext4",
 			"imageFeatures":             "layering",
 		},
+	}
+
+	// Add CSI secrets for Ceph authentication
+	if secrets != nil {
+		vol.Secrets = api.CSISecrets{
+			"userID":  secrets.UserID,
+			"userKey": secrets.UserKey,
+		}
 	}
 
 	writeOpts := &api.WriteOptions{
