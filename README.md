@@ -79,6 +79,18 @@ Nomad job during a workspace creation.
   + description: Vault KV v2 path containing CSI credentials (userID and userKey)
   + default: (none, required for persistent mode)
 
+#### GPU Support
+
+- NOMAD_GPU:
+  + description: Enable NVIDIA GPU support (true/false)
+  + default: "false"
+- NOMAD_GPU_COUNT:
+  + description: Number of GPUs to request
+  + default: "1"
+- NOMAD_GPU_COMPUTE_CAPABILITY:
+  + description: Minimum CUDA compute capability (e.g., "7.5" for Turing, "8.0" for Ampere)
+  + default: (none, accepts any GPU)
+
 #### Setting Resource Options
 
 You can configure resources when starting a workspace using `--provider-option` flags:
@@ -495,6 +507,157 @@ When switching storage modes, you need to delete and recreate the workspace:
 devpod delete my-workspace
 devpod provider set-options nomad --option NOMAD_STORAGE_MODE=persistent
 devpod up github.com/my-org/my-project --provider nomad
+```
+
+## GPU Support for ML Workloads
+
+The provider supports NVIDIA GPUs for machine learning, transcription, and compute-intensive workloads. When enabled, the provider configures the Nomad job with GPU device requests, nvidia runtime, and appropriate shared memory settings.
+
+### Prerequisites
+
+- Nomad cluster with NVIDIA GPU nodes
+- `nvidia-container-runtime` installed and configured on GPU nodes
+- Nomad client fingerprinting GPUs (verify with `nomad node status -verbose <node-id> | grep -i gpu`)
+
+### Quick Start
+
+Enable GPU support with a single option:
+
+```bash
+devpod up github.com/your-org/ml-project --provider nomad \
+  --provider-option NOMAD_GPU=true
+```
+
+### GPU with Compute Capability Requirement
+
+Request a GPU with a minimum CUDA compute capability:
+
+```bash
+# Request a Turing or newer GPU (compute capability 7.5+)
+devpod up github.com/your-org/ml-project --provider nomad \
+  --provider-option NOMAD_GPU=true \
+  --provider-option NOMAD_GPU_COMPUTE_CAPABILITY=7.5
+
+# Request multiple GPUs
+devpod up github.com/your-org/ml-project --provider nomad \
+  --provider-option NOMAD_GPU=true \
+  --provider-option NOMAD_GPU_COUNT=2
+```
+
+**Common Compute Capability Values:**
+| Capability | Architecture | Example GPUs |
+|------------|--------------|--------------|
+| 6.1 | Pascal | GTX 1080, Tesla P40 |
+| 7.0 | Volta | Tesla V100 |
+| 7.5 | Turing | RTX 2080, T4 |
+| 8.0 | Ampere | A100 |
+| 8.6 | Ampere | RTX 3090 |
+| 8.9 | Ada Lovelace | RTX 4090 |
+
+### Setting Persistent GPU Defaults
+
+Configure GPU support as the default for all workspaces:
+
+```bash
+devpod provider set-options nomad \
+  --option NOMAD_GPU=true \
+  --option NOMAD_GPU_COMPUTE_CAPABILITY=7.5
+
+# Verify configuration
+devpod provider options nomad
+```
+
+### Configuration via devcontainer.json
+
+Configure GPU support per-project in your `.devcontainer/devcontainer.json`:
+
+```json
+{
+  "name": "ML Training Project",
+  "image": "registry.cluster:5000/devcontainer-python:latest",
+  "remoteEnv": {
+    "NOMAD_GPU": "true",
+    "NOMAD_GPU_COMPUTE_CAPABILITY": "7.5"
+  }
+}
+```
+
+### What GPU Enablement Configures
+
+When `NOMAD_GPU=true`, the provider automatically:
+
+1. **Requests GPU devices** from Nomad's device scheduler
+2. **Sets Docker runtime to nvidia** for GPU passthrough
+3. **Increases shared memory to 2GB** (required by many ML frameworks)
+4. **Adds job constraint** to place on GPU-capable nodes
+5. **Sets NVIDIA environment variables** for proper GPU visibility
+
+### Verifying GPU Access
+
+After your workspace starts, verify GPU access:
+
+```bash
+devpod ssh your-workspace
+
+# Check GPU is visible
+nvidia-smi
+
+# Verify CUDA is working (if CUDA toolkit installed)
+nvcc --version
+```
+
+### Inspecting GPU Configuration
+
+Verify the Nomad job was created with correct GPU settings:
+
+```bash
+# Check GPU device request
+nomad job inspect your-workspace | jq '.Job.TaskGroups[0].Tasks[0].Resources.Devices'
+
+# Check Docker runtime is nvidia
+nomad job inspect your-workspace | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'
+
+# Check job constraints
+nomad job inspect your-workspace | jq '.Job.Constraints'
+
+# Check shared memory size (should be 2147483648 = 2GB)
+nomad job inspect your-workspace | jq '.Job.TaskGroups[0].Tasks[0].Config.shm_size'
+```
+
+### Troubleshooting
+
+**GPU not detected in container:**
+
+1. ✅ Verify Nomad client detects GPUs:
+   ```bash
+   nomad node status -verbose <node-id> | grep -i gpu
+   ```
+
+2. ✅ Check nvidia-container-runtime is installed:
+   ```bash
+   # On the Nomad client node
+   docker info | grep -i runtime
+   ```
+
+3. ✅ Verify job placement constraints:
+   ```bash
+   nomad job inspect your-workspace | jq '.Job.Constraints'
+   ```
+
+**Job fails to start:**
+
+Check allocation status for errors:
+```bash
+nomad job status your-workspace
+ALLOC_ID=$(nomad job status your-workspace | grep -E 'running|pending' | awk '{print $1}' | head -1)
+nomad alloc status $ALLOC_ID
+```
+
+**Insufficient GPU resources:**
+
+If no GPU nodes are available or all GPUs are in use, the job will remain pending. Check available GPU capacity:
+```bash
+nomad node status -verbose | grep -i gpu
 ```
 
 ## Using Private Docker Registries
