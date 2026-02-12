@@ -187,3 +187,106 @@ devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
   --provider-option VAULT_CHANGE_MODE=invalid
 # Expected: Error about invalid change mode
 ```
+
+## Testing with GPU Support
+
+### Prerequisites
+
+1. Nomad cluster with NVIDIA GPU nodes
+2. NVIDIA Docker runtime configured on GPU nodes
+3. Nomad client fingerprinting GPUs (check with `nomad node status -verbose`)
+
+### Basic GPU Test
+
+```bash
+# Clean up any existing workspace
+devpod delete 'multistep-transcriber'
+devpod provider delete nomad
+
+# Build the provider
+RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+
+# Launch workspace with GPU support
+devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug \
+  --provider-option NOMAD_GPU=true
+
+# Verify GPU access
+devpod ssh multistep-transcriber
+nvidia-smi
+```
+
+### GPU with Compute Capability Requirement
+
+```bash
+# Request GPU with minimum compute capability (e.g., 7.5 for Turing)
+devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug \
+  --provider-option NOMAD_GPU=true \
+  --provider-option NOMAD_GPU_COMPUTE_CAPABILITY=7.5
+
+# Request multiple GPUs
+devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug \
+  --provider-option NOMAD_GPU=true \
+  --provider-option NOMAD_GPU_COUNT=2
+```
+
+### GPU via devcontainer.json
+
+Create `.devcontainer/devcontainer.json`:
+```json
+{
+  "name": "GPU Workspace",
+  "image": "registry.cluster:5000/devcontainer-python:20251106b",
+  "remoteEnv": {
+    "NOMAD_GPU": "true",
+    "NOMAD_GPU_COMPUTE_CAPABILITY": "7.5"
+  }
+}
+```
+
+### Verify GPU Configuration
+
+```bash
+# Check Nomad job has GPU device request
+nomad job inspect multistep-transcriber | jq '.Job.TaskGroups[0].Tasks[0].Resources.Devices'
+
+# Check Docker runtime is nvidia
+nomad job inspect multistep-transcriber | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'
+
+# Check job constraints
+nomad job inspect multistep-transcriber | jq '.Job.Constraints'
+
+# Check shared memory size (should be 2GB)
+nomad job inspect multistep-transcriber | jq '.Job.TaskGroups[0].Tasks[0].Config.shm_size'
+
+# Check NVIDIA environment variables
+nomad job inspect multistep-transcriber | jq '.Job.TaskGroups[0].Tasks[0].Env'
+```
+
+### Troubleshooting GPU Issues
+
+**If GPU is not detected:**
+```bash
+# Check if Nomad client detects GPUs
+nomad node status -verbose <node-id> | grep -i gpu
+
+# Check if nvidia-container-runtime is installed
+docker info | grep -i runtime
+
+# Verify GPU placement constraints
+nomad job inspect multistep-transcriber | jq '.Job.Constraints'
+```
+
+**Test validation errors:**
+```bash
+# Test invalid GPU count (should fail)
+devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug \
+  --provider-option NOMAD_GPU=true \
+  --provider-option NOMAD_GPU_COUNT=0
+# Expected: Error about GPU count must be at least 1
+
+# Test invalid compute capability format (should fail)
+devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug \
+  --provider-option NOMAD_GPU=true \
+  --provider-option NOMAD_GPU_COMPUTE_CAPABILITY=invalid
+# Expected: Error about compute capability format
+```

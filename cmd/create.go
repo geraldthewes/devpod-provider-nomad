@@ -22,6 +22,27 @@ const (
 // CreateCmd holds the cmd flags
 type CreateCmd struct{}
 
+// buildGPUDeviceRequest creates a Nomad device request for NVIDIA GPUs
+func buildGPUDeviceRequest(options *opts.Options) *api.RequestedDevice {
+	count := uint64(options.GPUCount)
+	device := &api.RequestedDevice{
+		Name:  "nvidia/gpu",
+		Count: &count,
+	}
+
+	if options.GPUComputeCapability != "" {
+		device.Constraints = []*api.Constraint{
+			{
+				LTarget: "${device.attr.cuda_compute_capability}",
+				Operand: ">=",
+				RTarget: options.GPUComputeCapability,
+			},
+		}
+	}
+
+	return device
+}
+
 // NewCommandCmd defines a command
 func NewCreateCmd() *cobra.Command {
 	cmd := &CreateCmd{}
@@ -190,6 +211,12 @@ sleep infinity
 		MemoryMB: &mem,
 	}
 
+	// Add GPU device request if enabled
+	if options.GPUEnabled {
+		gpuDevice := buildGPUDeviceRequest(options)
+		jobResources.Devices = []*api.RequestedDevice{gpuDevice}
+	}
+
 	// Use the machine ID for job name and task group name
 	jobName := options.JobId
 
@@ -222,6 +249,17 @@ sleep infinity
 		},
 		Resources: jobResources,
 		Driver:    "docker",
+	}
+
+	// Configure GPU support if enabled
+	if options.GPUEnabled {
+		task.Config["runtime"] = "nvidia"
+		task.Config["shm_size"] = int64(2147483648) // 2GB shared memory for ML workloads
+		if task.Env == nil {
+			task.Env = make(map[string]string)
+		}
+		task.Env["NVIDIA_VISIBLE_DEVICES"] = "all"
+		task.Env["NVIDIA_DRIVER_CAPABILITIES"] = "compute,utility"
 	}
 
 	// Add Vault integration if configured
@@ -290,6 +328,22 @@ sleep infinity
 		Namespace:  &options.Namespace,
 		Region:     &options.Region,
 		TaskGroups: []*api.TaskGroup{taskGroup},
+	}
+
+	// Add GPU-specific job constraints
+	if options.GPUEnabled {
+		job.Constraints = append(job.Constraints,
+			&api.Constraint{
+				LTarget: "${attr.cpu.arch}",
+				Operand: "=",
+				RTarget: "amd64",
+			},
+			&api.Constraint{
+				LTarget: "${meta.gpu-dedicated}",
+				Operand: "!=",
+				RTarget: "true",
+			},
+		)
 	}
 
 	_, err = nomadClient.Create(ctx, job)

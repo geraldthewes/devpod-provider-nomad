@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/loft-sh/devpod/pkg/driver"
 )
@@ -43,6 +45,11 @@ type Options struct {
 	CSIClusterID string // Ceph cluster ID (required for persistent mode)
 	CSIPool      string // Ceph pool name, default "nomad"
 	CSIVaultPath string // Vault path for CSI credentials (e.g., "secret/data/ceph/csi")
+
+	// GPU configuration
+	GPUEnabled           bool
+	GPUCount             int
+	GPUComputeCapability string
 }
 
 const (
@@ -56,6 +63,9 @@ const (
 	defaultStorageMode = "ephemeral"
 	defaultCSIPluginID = "ceph-csi"
 	defaultCSIPool     = "nomad"
+
+	// GPU defaults
+	defaultGPUCount = 1
 
 	// Storage mode constants
 	StorageModeEphemeral  = "ephemeral"
@@ -103,6 +113,15 @@ func DefaultOptions() (*Options, error) {
 		}
 	}
 
+	// Parse GPU configuration
+	gpuEnabled := strings.ToLower(getEnv("NOMAD_GPU", "false")) == "true"
+	gpuCount := defaultGPUCount
+	if gpuCountStr := os.Getenv("NOMAD_GPU_COUNT"); gpuCountStr != "" {
+		if count, err := strconv.Atoi(gpuCountStr); err == nil && count > 0 {
+			gpuCount = count
+		}
+	}
+
 	opts := &Options{
 		DiskMB:     getEnv("NOMAD_DISKMB", defaultDiskMB),
 		Token:      "",
@@ -128,6 +147,11 @@ func DefaultOptions() (*Options, error) {
 		CSIClusterID: os.Getenv("NOMAD_CSI_CLUSTER_ID"),
 		CSIPool:      getEnv("NOMAD_CSI_POOL", defaultCSIPool),
 		CSIVaultPath: os.Getenv("NOMAD_CSI_VAULT_PATH"),
+
+		// GPU configuration
+		GPUEnabled:           gpuEnabled,
+		GPUCount:             gpuCount,
+		GPUComputeCapability: os.Getenv("NOMAD_GPU_COMPUTE_CAPABILITY"),
 	}
 
 	// Validate Vault configuration
@@ -137,6 +161,11 @@ func DefaultOptions() (*Options, error) {
 
 	// Validate CSI configuration
 	if err := opts.ValidateCSI(); err != nil {
+		return nil, err
+	}
+
+	// Validate GPU configuration
+	if err := opts.ValidateGPU(); err != nil {
 		return nil, err
 	}
 
@@ -220,6 +249,32 @@ func (o *Options) ValidateCSI() error {
 		}
 		if o.VaultAddr == "" {
 			return fmt.Errorf("VAULT_ADDR is required when NOMAD_STORAGE_MODE is 'persistent' (needed to fetch CSI credentials)")
+		}
+	}
+
+	return nil
+}
+
+// ValidateGPU validates GPU configuration settings
+func (o *Options) ValidateGPU() error {
+	if !o.GPUEnabled {
+		return nil
+	}
+
+	if o.GPUCount < 1 {
+		return fmt.Errorf("NOMAD_GPU_COUNT must be at least 1")
+	}
+
+	if o.GPUComputeCapability != "" {
+		// Validate format X.Y
+		parts := strings.Split(o.GPUComputeCapability, ".")
+		if len(parts) != 2 {
+			return fmt.Errorf("NOMAD_GPU_COMPUTE_CAPABILITY must be in X.Y format (e.g., '7.5')")
+		}
+		for _, p := range parts {
+			if _, err := strconv.Atoi(p); err != nil {
+				return fmt.Errorf("NOMAD_GPU_COMPUTE_CAPABILITY must be numeric (e.g., '7.5')")
+			}
 		}
 	}
 

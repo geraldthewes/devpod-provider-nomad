@@ -21,6 +21,8 @@ func TestValidateCSI_PersistentModeWithClusterID(t *testing.T) {
 		StorageMode:  StorageModePersistent,
 		CSIClusterID: "test-cluster-id",
 		CSIPluginID:  "ceph-csi",
+		CSIVaultPath: "secret/data/ceph/csi",
+		VaultAddr:    "https://vault.example.com:8200",
 	}
 
 	err := opts.ValidateCSI()
@@ -121,5 +123,178 @@ func TestDefaultOptions_StorageMode(t *testing.T) {
 
 	if opts.CSIPool != defaultCSIPool {
 		t.Errorf("Expected default CSI pool %s, got %s", defaultCSIPool, opts.CSIPool)
+	}
+}
+
+func TestValidateGPU_Disabled(t *testing.T) {
+	opts := &Options{
+		GPUEnabled: false,
+	}
+
+	err := opts.ValidateGPU()
+	if err != nil {
+		t.Errorf("Expected no error when GPU is disabled, got: %v", err)
+	}
+}
+
+func TestValidateGPU_ValidConfig(t *testing.T) {
+	opts := &Options{
+		GPUEnabled:           true,
+		GPUCount:             1,
+		GPUComputeCapability: "7.5",
+	}
+
+	err := opts.ValidateGPU()
+	if err != nil {
+		t.Errorf("Expected no error for valid GPU config, got: %v", err)
+	}
+}
+
+func TestValidateGPU_ValidConfigNoCapability(t *testing.T) {
+	opts := &Options{
+		GPUEnabled:           true,
+		GPUCount:             2,
+		GPUComputeCapability: "",
+	}
+
+	err := opts.ValidateGPU()
+	if err != nil {
+		t.Errorf("Expected no error for valid GPU config without capability, got: %v", err)
+	}
+}
+
+func TestValidateGPU_InvalidComputeCapability_SingleNumber(t *testing.T) {
+	opts := &Options{
+		GPUEnabled:           true,
+		GPUCount:             1,
+		GPUComputeCapability: "75",
+	}
+
+	err := opts.ValidateGPU()
+	if err == nil {
+		t.Error("Expected error for invalid compute capability format (single number)")
+	}
+}
+
+func TestValidateGPU_InvalidComputeCapability_NonNumeric(t *testing.T) {
+	opts := &Options{
+		GPUEnabled:           true,
+		GPUCount:             1,
+		GPUComputeCapability: "seven.five",
+	}
+
+	err := opts.ValidateGPU()
+	if err == nil {
+		t.Error("Expected error for non-numeric compute capability")
+	}
+}
+
+func TestValidateGPU_InvalidComputeCapability_ThreeParts(t *testing.T) {
+	opts := &Options{
+		GPUEnabled:           true,
+		GPUCount:             1,
+		GPUComputeCapability: "7.5.0",
+	}
+
+	err := opts.ValidateGPU()
+	if err == nil {
+		t.Error("Expected error for compute capability with three parts")
+	}
+}
+
+func TestValidateGPU_InvalidCount(t *testing.T) {
+	opts := &Options{
+		GPUEnabled: true,
+		GPUCount:   0,
+	}
+
+	err := opts.ValidateGPU()
+	if err == nil {
+		t.Error("Expected error for GPU count of 0")
+	}
+}
+
+func TestDefaultOptions_GPU(t *testing.T) {
+	// Save current environment
+	origGPU := os.Getenv("NOMAD_GPU")
+	origGPUCount := os.Getenv("NOMAD_GPU_COUNT")
+	origGPUCapability := os.Getenv("NOMAD_GPU_COMPUTE_CAPABILITY")
+
+	// Clean environment for test
+	os.Unsetenv("NOMAD_GPU")
+	os.Unsetenv("NOMAD_GPU_COUNT")
+	os.Unsetenv("NOMAD_GPU_COMPUTE_CAPABILITY")
+
+	// Restore environment after test
+	defer func() {
+		if origGPU != "" {
+			os.Setenv("NOMAD_GPU", origGPU)
+		} else {
+			os.Unsetenv("NOMAD_GPU")
+		}
+		if origGPUCount != "" {
+			os.Setenv("NOMAD_GPU_COUNT", origGPUCount)
+		} else {
+			os.Unsetenv("NOMAD_GPU_COUNT")
+		}
+		if origGPUCapability != "" {
+			os.Setenv("NOMAD_GPU_COMPUTE_CAPABILITY", origGPUCapability)
+		} else {
+			os.Unsetenv("NOMAD_GPU_COMPUTE_CAPABILITY")
+		}
+	}()
+
+	opts, err := DefaultOptions()
+	if err != nil {
+		t.Fatalf("DefaultOptions failed: %v", err)
+	}
+
+	if opts.GPUEnabled != false {
+		t.Errorf("Expected default GPU enabled to be false, got %v", opts.GPUEnabled)
+	}
+
+	if opts.GPUCount != defaultGPUCount {
+		t.Errorf("Expected default GPU count %d, got %d", defaultGPUCount, opts.GPUCount)
+	}
+
+	if opts.GPUComputeCapability != "" {
+		t.Errorf("Expected default GPU compute capability to be empty, got %s", opts.GPUComputeCapability)
+	}
+}
+
+func TestDefaultOptions_GPUEnabled(t *testing.T) {
+	// Save current environment
+	origGPU := os.Getenv("NOMAD_GPU")
+	origGPUCount := os.Getenv("NOMAD_GPU_COUNT")
+
+	// Set environment for test
+	os.Setenv("NOMAD_GPU", "true")
+	os.Setenv("NOMAD_GPU_COUNT", "2")
+
+	// Restore environment after test
+	defer func() {
+		if origGPU != "" {
+			os.Setenv("NOMAD_GPU", origGPU)
+		} else {
+			os.Unsetenv("NOMAD_GPU")
+		}
+		if origGPUCount != "" {
+			os.Setenv("NOMAD_GPU_COUNT", origGPUCount)
+		} else {
+			os.Unsetenv("NOMAD_GPU_COUNT")
+		}
+	}()
+
+	opts, err := DefaultOptions()
+	if err != nil {
+		t.Fatalf("DefaultOptions failed: %v", err)
+	}
+
+	if opts.GPUEnabled != true {
+		t.Errorf("Expected GPU enabled to be true, got %v", opts.GPUEnabled)
+	}
+
+	if opts.GPUCount != 2 {
+		t.Errorf("Expected GPU count 2, got %d", opts.GPUCount)
 	}
 }

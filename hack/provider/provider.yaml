@@ -92,6 +92,22 @@ options:
       Example: secret/data/ceph/csi
       Required when NOMAD_STORAGE_MODE is "persistent".
     default:
+  NOMAD_GPU:
+    description: |-
+      Enable NVIDIA GPU support for the workspace.
+      Set to "true" to enable GPU support.
+    default: "false"
+  NOMAD_GPU_COUNT:
+    description: |-
+      Number of GPUs to request (default: 1).
+      Only used when NOMAD_GPU is "true".
+    default: "1"
+  NOMAD_GPU_COMPUTE_CAPABILITY:
+    description: |-
+      Minimum CUDA compute capability (e.g., "7.5" for Turing, "8.0" for Ampere).
+      Common values: 6.1 (Pascal), 7.0 (Volta), 7.5 (Turing), 8.0 (A100), 8.6 (RTX 3090).
+      Leave empty to accept any GPU.
+    default:
 agent:
   path: ${AGENT_PATH}
   dataPath: ${AGENT_DATA_PATH}
