@@ -83,6 +83,13 @@ func FromEnv() (*Options, error) {
 }
 
 func DefaultOptions() (*Options, error) {
+	// Load config file (if available for local workspace sources)
+	workspacePath := GetWorkspacePath()
+	configFile, err := LoadConfigFile(workspacePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config file: %w", err)
+	}
+
 	var runOptions *driver.RunOptions
 	runOptsEnv := os.Getenv("DEVCONTAINER_RUN_OPTIONS")
 	if runOptsEnv != "" && runOptsEnv != "null" {
@@ -93,65 +100,63 @@ func DefaultOptions() (*Options, error) {
 		}
 	}
 
-	// Parse Vault policies
-	var vaultPolicies []string
-	vaultPoliciesJSON := os.Getenv("VAULT_POLICIES_JSON")
-	if vaultPoliciesJSON != "" {
-		err := json.Unmarshal([]byte(vaultPoliciesJSON), &vaultPolicies)
-		if err != nil {
-			return nil, fmt.Errorf("unmarshal VAULT_POLICIES_JSON: %w", err)
-		}
+	// Parse Vault policies from env or config
+	vaultPolicies := getVaultPolicies(configFile)
+
+	// Parse Vault secrets from env or config
+	vaultSecrets, err := getVaultSecrets(configFile)
+	if err != nil {
+		return nil, err
 	}
 
-	// Parse Vault secrets
-	var vaultSecrets []VaultSecret
-	vaultSecretsJSON := os.Getenv("VAULT_SECRETS_JSON")
-	if vaultSecretsJSON != "" {
-		err := json.Unmarshal([]byte(vaultSecretsJSON), &vaultSecrets)
-		if err != nil {
-			return nil, fmt.Errorf("unmarshal VAULT_SECRETS_JSON: %w", err)
-		}
+	// Parse GPU configuration using config file as fallback
+	var gpuConfigValue *bool
+	var gpuCountConfigValue *int
+	var gpuCapabilityConfig string
+	if configFile != nil {
+		gpuConfigValue = configFile.NomadGPU
+		gpuCountConfigValue = configFile.NomadGPUCount
+		gpuCapabilityConfig = configFile.NomadGPUComputeCapability
 	}
+	gpuEnabled := getEnvOrConfigBool("NOMAD_GPU", gpuConfigValue, false)
+	gpuCount := getEnvOrConfigInt("NOMAD_GPU_COUNT", gpuCountConfigValue, defaultGPUCount)
 
-	// Parse GPU configuration
-	gpuEnabled := strings.ToLower(getEnv("NOMAD_GPU", "false")) == "true"
-	gpuCount := defaultGPUCount
-	if gpuCountStr := os.Getenv("NOMAD_GPU_COUNT"); gpuCountStr != "" {
-		if count, err := strconv.Atoi(gpuCountStr); err == nil && count > 0 {
-			gpuCount = count
-		}
+	// Get config values for other fields
+	var cfg ConfigFile
+	if configFile != nil {
+		cfg = *configFile
 	}
 
 	opts := &Options{
-		DiskMB:     getEnv("NOMAD_DISKMB", defaultDiskMB),
+		DiskMB:     getEnvOrConfig("NOMAD_DISKMB", cfg.NomadDiskMB, defaultDiskMB),
 		Token:      "",
-		Namespace:  getEnv("NOMAD_NAMESPACE", ""),
-		Region:     getEnv("NOMAD_REGION", ""),
+		Namespace:  getEnvOrConfig("NOMAD_NAMESPACE", cfg.NomadNamespace, ""),
+		Region:     getEnvOrConfig("NOMAD_REGION", cfg.NomadRegion, ""),
 		TaskName:   getEnv("MACHINE_ID", "devpod"),
-		CPU:        getEnv("NOMAD_CPU", defaultCpu),
-		MemoryMB:   getEnv("NOMAD_MEMORYMB", defaultMemoryMB),
+		CPU:        getEnvOrConfig("NOMAD_CPU", cfg.NomadCPU, defaultCpu),
+		MemoryMB:   getEnvOrConfig("NOMAD_MEMORYMB", cfg.NomadMemoryMB, defaultMemoryMB),
 		JobId:      getEnv("MACHINE_ID", "devpod"), // set by devpod for machine providers
 		DriverOpts: runOptions,
 
 		// Vault configuration
-		VaultAddr:       os.Getenv("VAULT_ADDR"),
-		VaultRole:       getEnv("VAULT_ROLE", defaultVaultRole),
-		VaultNamespace:  os.Getenv("VAULT_NAMESPACE"),
-		VaultChangeMode: getEnv("VAULT_CHANGE_MODE", defaultVaultChangeMode),
+		VaultAddr:       getEnvOrConfig("VAULT_ADDR", cfg.VaultAddr, ""),
+		VaultRole:       getEnvOrConfig("VAULT_ROLE", cfg.VaultRole, defaultVaultRole),
+		VaultNamespace:  getEnvOrConfig("VAULT_NAMESPACE", cfg.VaultNamespace, ""),
+		VaultChangeMode: getEnvOrConfig("VAULT_CHANGE_MODE", cfg.VaultChangeMode, defaultVaultChangeMode),
 		VaultPolicies:   vaultPolicies,
 		VaultSecrets:    vaultSecrets,
 
 		// CSI Storage configuration
-		StorageMode:  getEnv("NOMAD_STORAGE_MODE", defaultStorageMode),
-		CSIPluginID:  getEnv("NOMAD_CSI_PLUGIN_ID", defaultCSIPluginID),
-		CSIClusterID: os.Getenv("NOMAD_CSI_CLUSTER_ID"),
-		CSIPool:      getEnv("NOMAD_CSI_POOL", defaultCSIPool),
-		CSIVaultPath: os.Getenv("NOMAD_CSI_VAULT_PATH"),
+		StorageMode:  getEnvOrConfig("NOMAD_STORAGE_MODE", cfg.NomadStorageMode, defaultStorageMode),
+		CSIPluginID:  getEnvOrConfig("NOMAD_CSI_PLUGIN_ID", cfg.NomadCSIPluginID, defaultCSIPluginID),
+		CSIClusterID: getEnvOrConfig("NOMAD_CSI_CLUSTER_ID", cfg.NomadCSIClusterID, ""),
+		CSIPool:      getEnvOrConfig("NOMAD_CSI_POOL", cfg.NomadCSIPool, defaultCSIPool),
+		CSIVaultPath: getEnvOrConfig("NOMAD_CSI_VAULT_PATH", cfg.NomadCSIVaultPath, ""),
 
 		// GPU configuration
 		GPUEnabled:           gpuEnabled,
 		GPUCount:             gpuCount,
-		GPUComputeCapability: os.Getenv("NOMAD_GPU_COMPUTE_CAPABILITY"),
+		GPUComputeCapability: getEnvOrConfig("NOMAD_GPU_COMPUTE_CAPABILITY", gpuCapabilityConfig, ""),
 	}
 
 	// Validate Vault configuration
@@ -177,6 +182,47 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// getVaultPolicies returns Vault policies from env var (JSON) or config file.
+// Environment variable takes precedence.
+func getVaultPolicies(configFile *ConfigFile) []string {
+	// Check env var first
+	vaultPoliciesJSON := os.Getenv("VAULT_POLICIES_JSON")
+	if vaultPoliciesJSON != "" {
+		var policies []string
+		if err := json.Unmarshal([]byte(vaultPoliciesJSON), &policies); err == nil {
+			return policies
+		}
+	}
+
+	// Fall back to config file
+	if configFile != nil && len(configFile.VaultPolicies) > 0 {
+		return configFile.VaultPolicies
+	}
+
+	return nil
+}
+
+// getVaultSecrets returns Vault secrets from env var (JSON) or config file.
+// Environment variable takes precedence.
+func getVaultSecrets(configFile *ConfigFile) ([]VaultSecret, error) {
+	// Check env var first
+	vaultSecretsJSON := os.Getenv("VAULT_SECRETS_JSON")
+	if vaultSecretsJSON != "" {
+		var secrets []VaultSecret
+		if err := json.Unmarshal([]byte(vaultSecretsJSON), &secrets); err != nil {
+			return nil, fmt.Errorf("unmarshal VAULT_SECRETS_JSON: %w", err)
+		}
+		return secrets, nil
+	}
+
+	// Fall back to config file
+	if configFile != nil && len(configFile.VaultSecrets) > 0 {
+		return configFile.VaultSecrets, nil
+	}
+
+	return nil, nil
 }
 
 // ValidateVault validates Vault configuration settings

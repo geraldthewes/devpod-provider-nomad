@@ -22,6 +22,7 @@ A [DevPod](https://devpod.sh/) provider for [HashiCorp Nomad](https://www.nomadp
 
 - [Getting Started](#getting-started)
 - [Provider Configurations](#provider-configurations)
+- [Config File Support](#config-file-support)
 - [Environment Variables](#environment-variables)
 - [Persistent Storage with CSI Volumes](#persistent-storage-with-csi-volumes)
 - [GPU Support for ML Workloads](#gpu-support-for-ml-workloads)
@@ -135,6 +136,131 @@ Verify your configuration:
 ```shell
 devpod provider options nomad
 ```
+
+## Config File Support
+
+Configure provider options using a `.devpod/nomad.yaml` file in your project. This allows you to commit provider configuration alongside your code, making it easy to share GPU requirements, resource settings, and Vault secrets configuration with your team.
+
+### Quick Start
+
+**Step 1:** Create a `.devpod/nomad.yaml` file in your project root:
+
+```yaml
+# .devpod/nomad.yaml
+nomad_cpu: "2000"
+nomad_memorymb: "4096"
+nomad_gpu: true
+nomad_gpu_compute_capability: "7.5"
+```
+
+**Step 2:** Commit and push the config file to your repository.
+
+**Step 3:** Launch your workspace from inside the repo directory:
+
+```bash
+cd /path/to/your/project
+devpod up github.com/your-org/your-project --provider nomad
+```
+
+The provider automatically detects the `.devpod/nomad.yaml` file in your current working directory and applies the settings.
+
+### How Config File Detection Works
+
+The provider looks for `.devpod/nomad.yaml` in these locations (in order):
+
+1. **Local workspace path** - When using `devpod up /path/to/project`
+2. **Current working directory** - When running `devpod up github.com/...` from inside a local clone
+
+This means you can use git URLs while still benefiting from local config files - just run the command from inside your cloned repository.
+
+### Config File Format
+
+The config file uses YAML format with snake_case keys matching the environment variable names (lowercase):
+
+```yaml
+# Resource configuration
+nomad_cpu: "2000"           # CPU in MHz
+nomad_memorymb: "4096"      # Memory in MB
+nomad_diskmb: "10240"       # Disk in MB
+
+# Nomad job settings
+nomad_namespace: "development"
+nomad_region: "us-west-1"
+
+# GPU configuration
+nomad_gpu: true
+nomad_gpu_count: 2
+nomad_gpu_compute_capability: "7.5"
+
+# CSI Storage configuration
+nomad_storage_mode: "persistent"
+nomad_csi_plugin_id: "ceph-csi"
+nomad_csi_cluster_id: "your-cluster-id"
+nomad_csi_pool: "nomad"
+nomad_csi_vault_path: "secret/data/ceph/csi"
+
+# Vault configuration
+vault_addr: "https://vault.example.com:8200"
+vault_role: "nomad-workloads"
+vault_namespace: "engineering"
+vault_change_mode: "restart"
+vault_policies:
+  - "policy1"
+  - "policy2"
+vault_secrets:
+  - path: "secret/data/myapp"
+    fields:
+      api_key: "API_KEY"
+      secret_token: "SECRET_TOKEN"
+```
+
+### Precedence Rules
+
+Options are applied in the following order (highest priority first):
+
+1. **Command-line flags** (`--provider-option`) - Always takes precedence
+2. **Config file** (`.devpod/nomad.yaml`) - Used if no command-line flag
+3. **Provider defaults** (`devpod provider set-options`) - Used if nothing else specified
+
+This allows you to:
+- Set team defaults in the config file
+- Override specific options per-run with command-line flags
+- Fall back to provider-wide defaults when not specified
+
+### Example: Override Config File with Command Line
+
+```bash
+# Config file says GPU=true, but disable it for this run
+devpod up /path/to/project --provider nomad --provider-option NOMAD_GPU=false
+```
+
+### Typical Workflow
+
+The recommended workflow for teams using this provider:
+
+```bash
+# 1. Clone your repository
+git clone https://github.com/your-org/ml-training-project.git
+cd ml-training-project
+
+# 2. The repo already has .devpod/nomad.yaml committed with team settings
+cat .devpod/nomad.yaml
+# nomad_gpu: true
+# nomad_gpu_compute_capability: "7.5"
+# nomad_cpu: "4000"
+# nomad_memorymb: "16384"
+
+# 3. Launch workspace - config is automatically loaded from current directory
+devpod up github.com/your-org/ml-training-project --provider nomad
+
+# 4. GPU and resources are configured as specified in the config file
+```
+
+### Important Notes
+
+- **Run from repo directory**: The config file is only detected when you run `devpod up` from inside the directory containing `.devpod/nomad.yaml`
+- **Commit the config**: Add `.devpod/nomad.yaml` to your repository so team members get the same settings
+- **Override when needed**: Use `--provider-option` flags to override config file settings for a specific run
 
 ## Environment Variables
 

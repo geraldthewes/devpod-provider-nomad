@@ -290,3 +290,130 @@ devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug
   --provider-option NOMAD_GPU_COMPUTE_CAPABILITY=invalid
 # Expected: Error about compute capability format
 ```
+
+## Testing with Config File Support
+
+The provider supports reading options from a `.devpod/nomad.yaml` file for local workspace sources.
+
+### Unit Tests
+
+Run the config file unit tests:
+```bash
+go test ./pkg/options/... -v -run Config
+```
+
+### Integration Test (Local Source)
+
+```bash
+# Create test project directory
+mkdir -p /tmp/test-project/.devpod
+
+# Create config file with GPU support
+cat > /tmp/test-project/.devpod/nomad.yaml << 'EOF'
+nomad_gpu: true
+nomad_gpu_compute_capability: "7.5"
+nomad_cpu: "2000"
+nomad_memorymb: "4096"
+EOF
+
+# Build and test
+devpod delete test-project || true
+devpod provider delete nomad || true
+RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+
+# Launch workspace from local path (config file will be loaded)
+devpod up /tmp/test-project --provider nomad --ide none --debug
+
+# Verify GPU was configured from config file
+nomad job inspect test-project | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'
+# Should output: "nvidia"
+
+# Verify CPU/memory from config file
+nomad job inspect test-project | jq '.Job.TaskGroups[0].Tasks[0].Resources.CPU'
+# Should output: 2000
+```
+
+### Test Precedence (Command Line Overrides Config File)
+
+```bash
+# Config file says GPU=true, but command line overrides to false
+devpod up /tmp/test-project --provider nomad --provider-option NOMAD_GPU=false --ide none
+
+# Verify GPU was NOT configured (command line takes precedence)
+nomad job inspect test-project | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'
+# Should output: null (no nvidia runtime)
+```
+
+### Test Config File with Vault Secrets
+
+```bash
+# Create config file with Vault secrets in native YAML format
+cat > /tmp/test-project/.devpod/nomad.yaml << 'EOF'
+vault_addr: "https://vault.example.com:8200"
+vault_policies:
+  - "devpod-test"
+vault_secrets:
+  - path: "secret/data/test/devpod"
+    fields:
+      test_key: "TEST_KEY"
+      api_token: "API_TOKEN"
+EOF
+
+# Launch workspace
+devpod up /tmp/test-project --provider nomad --ide none --debug
+
+# Verify Vault configuration was applied
+nomad job inspect test-project | jq '.Job.TaskGroups[0].Tasks[0].Vault'
+```
+
+### Test Config File Not Found (Should Not Error)
+
+```bash
+# Create project without config file
+mkdir -p /tmp/no-config-project
+devpod up /tmp/no-config-project --provider nomad --ide none --debug
+# Should work normally, using defaults
+```
+
+### Test Git Source with CWD Fallback
+
+```bash
+# Clone a repo locally
+git clone https://github.com/microsoft/vscode-remote-try-node.git /tmp/vscode-test
+cd /tmp/vscode-test
+
+# Create config file
+mkdir -p .devpod
+cat > .devpod/nomad.yaml << 'EOF'
+nomad_cpu: "2000"
+nomad_memorymb: "4096"
+EOF
+
+# Run from inside the repo - config file WILL be loaded via CWD fallback
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+
+# Verify config was applied
+nomad job inspect vscode-remote-try-node | jq '.Job.TaskGroups[0].Tasks[0].Resources.CPU'
+# Should output: 2000
+```
+
+### Test Git Source from Different Directory (No Config)
+
+```bash
+# Run from a directory WITHOUT a config file
+cd /tmp
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug
+
+# Config file won't be found - defaults will be used
+# Use --provider-option flags in this case
+devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+  --provider-option NOMAD_GPU=true
+```
+
+### Cleanup
+
+```bash
+devpod delete test-project || true
+devpod delete no-config-project || true
+rm -rf /tmp/test-project /tmp/no-config-project
+```
