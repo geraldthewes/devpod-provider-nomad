@@ -1,18 +1,37 @@
 # DevPod Provider for Nomad
 
-Author: Brian Cain
+[![Go](https://github.com/geraldthewes/devpod-provider-nomad/actions/workflows/go.yml/badge.svg)](https://github.com/geraldthewes/devpod-provider-nomad/actions/workflows/go.yml)
+[![Release](https://github.com/geraldthewes/devpod-provider-nomad/actions/workflows/release.yml/badge.svg)](https://github.com/geraldthewes/devpod-provider-nomad/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/geraldthewes/devpod-provider-nomad)](https://goreportcard.com/report/github.com/geraldthewes/devpod-provider-nomad)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
+[![GitHub release](https://img.shields.io/github/v/release/geraldthewes/devpod-provider-nomad)](https://github.com/geraldthewes/devpod-provider-nomad/releases)
 
-[![Go](https://github.com/briancain/devpod-provider-nomad/actions/workflows/go.yml/badge.svg)](https://github.com/briancain/devpod-provider-nomad/actions/workflows/go.yml) [![Release](https://github.com/briancain/devpod-provider-nomad/actions/workflows/release.yml/badge.svg)](https://github.com/briancain/devpod-provider-nomad/actions/workflows/release.yml)
+A [DevPod](https://devpod.sh/) provider for [HashiCorp Nomad](https://www.nomadproject.io/) that enables cloud development environments on your Nomad cluster.
 
-This is a provider for [DevPod](https://devpod.sh/) that allows you to create a
-DevPod using [HashiCorp Nomad](https://www.nomadproject.io/).
+> Originally created by [Brian Cain](https://github.com/briancain/devpod-provider-nomad). This fork adds Vault secrets integration, CSI persistent storage, and NVIDIA GPU support.
 
-Please report any issues or feature requests to the
-[Github Issues](https://github.com/briancain/devpod-provider-nomad/issues) page.
+## Features
 
-This project is still a work in progress, excuse our mess! <3
+- **Vault Secrets Integration** - Securely inject secrets from HashiCorp Vault as environment variables
+- **CSI Persistent Storage** - Persist workspace data across restarts using Ceph-CSI or other CSI drivers
+- **NVIDIA GPU Support** - Run ML/AI workloads with GPU passthrough and compute capability constraints
+- **Private Registry Support** - Use custom Docker registries with TLS certificates
+- **Flexible Resource Configuration** - Configure CPU, memory, and disk per workspace
 
-[devpod.sh](https://devpod.sh/)
+## Table of Contents
+
+- [Getting Started](#getting-started)
+- [Provider Configurations](#provider-configurations)
+- [Environment Variables](#environment-variables)
+- [Persistent Storage with CSI Volumes](#persistent-storage-with-csi-volumes)
+- [GPU Support for ML Workloads](#gpu-support-for-ml-workloads)
+- [Using Private Docker Registries](#using-private-docker-registries)
+- [Vault Secrets Integration](#vault-secrets-integration)
+- [DevPod Context Options](#devpod-context-options)
+- [Testing Locally](#testing-locally)
+- [Development vs Production Builds](#development-vs-production-builds)
+
+---
 
 ## Getting Started
 
