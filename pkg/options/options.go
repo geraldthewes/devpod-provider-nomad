@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/loft-sh/devpod/pkg/driver"
+	"github.com/loft-sh/log"
 )
 
 // VaultSecret represents a Vault secret path and its field mappings
@@ -88,6 +90,12 @@ func DefaultOptions() (*Options, error) {
 	configFile, err := LoadConfigFile(workspacePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config file: %w", err)
+	}
+
+	if configFile != nil {
+		logger := log.Default.ErrorStreamOnly()
+		configPath := filepath.Join(workspacePath, ".devpod", "nomad.yaml")
+		logger.Infof("Loaded config file: %s", configPath)
 	}
 
 	var runOptions *driver.RunOptions
