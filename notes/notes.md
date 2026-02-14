@@ -1612,3 +1612,810 @@ Here is Claude's plan:
  3. Launch workspace and verify Nomad shows correct task name:
  nomad job status <workspace-name>
 
+
+     ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+     │ CSI Persistent Volume Support for DevPod Nomad Provider                                                                                                                         │
+     │                                                                                                                                                                                 │
+     │ Summary                                                                                                                                                                         │
+     │                                                                                                                                                                                 │
+     │ Add CSI persistent volume support to enable workspace data to survive job restarts. Users specify a storage mode (ephemeral or persistent) rather than volume names - volumes   │
+     │ are automatically created and deleted based on the workspace lifecycle.                                                                                                         │
+     │                                                                                                                                                                                 │
+     │ Key Requirements                                                                                                                                                                │
+     │                                                                                                                                                                                 │
+     │ 1. Storage mode toggle: NOMAD_STORAGE_MODE = ephemeral (default) | persistent                                                                                                   │
+     │ 2. Auto-derived volume names: devpod-{MACHINE_ID} pattern                                                                                                                       │
+     │ 3. Automatic cleanup: CSI volumes deleted when devcontainer is deleted                                                                                                          │
+     │ 4. Capacity: Re-use NOMAD_DISKMB (convert MB to bytes for CSI)                                                                                                                  │
+     │ 5. Mount path: /workspace for persistent storage                                                                                                                                │
+     │                                                                                                                                                                                 │
+     │ User's Environment                                                                                                                                                              │
+     │                                                                                                                                                                                 │
+     │ - CSI Plugin: ceph-csi (Provider: rbd.csi.ceph.com)                                                                                                                             │
+     │ - Ceph Cluster ID: 70464857-9ed6-11f0-8df5-d45d64d7d4f0                                                                                                                         │
+     │ - Pool: nomad                                                                                                                                                                   │
+     │ - Access mode: single-node-writer                                                                                                                                               │
+     │ - Attachment mode: file-system                                                                                                                                                  │
+     │                                                                                                                                                                                 │
+     │ New Provider Options                                                                                                                                                            │
+     │                                                                                                                                                                                 │
+     │ | Option               | Default                   | Description                           |                                                                                    │
+     │ |----------------------|---------------------------|---------------------------------------|                                                                                    │
+     │ | NOMAD_STORAGE_MODE   | ephemeral                 | Storage mode: ephemeral or persistent |                                                                                    │
+     │ | NOMAD_CSI_PLUGIN_ID  | ceph-csi                  | CSI plugin ID                         |                                                                                    │
+     │ | NOMAD_CSI_CLUSTER_ID | (required for persistent) | Ceph cluster ID                       |                                                                                    │
+     │ | NOMAD_CSI_POOL       | nomad                     | Ceph pool name                        |                                                                                    │
+     │                                                                                                                                                                                 │
+     │ Files to Modify                                                                                                                                                                 │
+     │                                                                                                                                                                                 │
+     │ 1. pkg/options/options.go                                                                                                                                                       │
+     │                                                                                                                                                                                 │
+     │ Add to Options struct:                                                                                                                                                          │
+     │ // CSI Storage configuration                                                                                                                                                    │
+     │ StorageMode    string // "ephemeral" (default) or "persistent"                                                                                                                  │
+     │ CSIPluginID    string // CSI plugin ID, default "ceph-csi"                                                                                                                      │
+     │ CSIClusterID   string // Ceph cluster ID (required for persistent mode)                                                                                                         │
+     │ CSIPool        string // Ceph pool name, default "nomad"                                                                                                                        │
+     │                                                                                                                                                                                 │
+     │ Add constants:                                                                                                                                                                  │
+     │ const (                                                                                                                                                                         │
+     │     defaultStorageMode   = "ephemeral"                                                                                                                                          │
+     │     defaultCSIPluginID   = "ceph-csi"                                                                                                                                           │
+     │     defaultCSIPool       = "nomad"                                                                                                                                              │
+     │     StorageModeEphemeral = "ephemeral"                                                                                                                                          │
+     │     StorageModePersistent = "persistent"                                                                                                                                        │
+     │ )                                                                                                                                                                               │
+     │                                                                                                                                                                                 │
+     │ Add methods:                                                                                                                                                                    │
+     │ - ValidateCSI() - Validates CSI config (require cluster ID for persistent mode)                                                                                                 │
+     │ - GetVolumeID() - Returns devpod-{JobId}                                                                                                                                        │
+     │                                                                                                                                                                                 │
+     │ 2. pkg/nomad/nomad.go                                                                                                                                                           │
+     │                                                                                                                                                                                 │
+     │ Add CSI volume methods:                                                                                                                                                         │
+     │ - VolumeExists(ctx, volumeID, namespace) - Check if volume exists                                                                                                               │
+     │ - CreateCSIVolume(ctx, volumeID, capacityBytes, pluginID, clusterID, pool, namespace) - Create volume                                                                           │
+     │ - DeleteCSIVolume(ctx, volumeID, namespace) - Delete volume (with deregister)                                                                                                   │
+     │                                                                                                                                                                                 │
+     │ 3. cmd/create.go                                                                                                                                                                │
+     │                                                                                                                                                                                 │
+     │ Changes:                                                                                                                                                                        │
+     │ 1. If StorageMode == "persistent":                                                                                                                                              │
+     │   - Check if volume exists via VolumeExists()                                                                                                                                   │
+     │   - Create volume if not exists via CreateCSIVolume()                                                                                                                           │
+     │   - Add VolumeRequest to TaskGroup.Volumes                                                                                                                                      │
+     │   - Add VolumeMount to Task.VolumeMounts (destination: /workspace)                                                                                                              │
+     │   - Don't add host bind mount for workspace directory                                                                                                                           │
+     │ 2. If StorageMode == "ephemeral" (default):                                                                                                                                     │
+     │   - Keep current behavior with EphemeralDisk                                                                                                                                    │
+     │                                                                                                                                                                                 │
+     │ 4. cmd/delete.go                                                                                                                                                                │
+     │                                                                                                                                                                                 │
+     │ Changes:                                                                                                                                                                        │
+     │ 1. Delete job first (existing behavior)                                                                                                                                         │
+     │ 2. If StorageMode == "persistent":                                                                                                                                              │
+     │   - Delete CSI volume via DeleteCSIVolume()                                                                                                                                     │
+     │   - Log warning if volume deletion fails (don't block workspace cleanup)                                                                                                        │
+     │                                                                                                                                                                                 │
+     │ 5. hack/provider/provider.yaml                                                                                                                                                  │
+     │                                                                                                                                                                                 │
+     │ Add options:                                                                                                                                                                    │
+     │ NOMAD_STORAGE_MODE:                                                                                                                                                             │
+     │   description: Storage mode ("ephemeral" or "persistent")                                                                                                                       │
+     │   default: "ephemeral"                                                                                                                                                          │
+     │ NOMAD_CSI_PLUGIN_ID:                                                                                                                                                            │
+     │   description: CSI plugin ID for persistent storage                                                                                                                             │
+     │   default: "ceph-csi"                                                                                                                                                           │
+     │ NOMAD_CSI_CLUSTER_ID:                                                                                                                                                           │
+     │   description: Ceph cluster ID (required for persistent mode)                                                                                                                   │
+     │   default:                                                                                                                                                                      │
+     │ NOMAD_CSI_POOL:                                                                                                                                                                 │
+     │   description: Ceph pool name for CSI volumes                                                                                                                                   │
+     │   default: "nomad"                                                                                                                                                              │
+     │                                                                                                                                                                                 │
+     │ Implementation Steps                                                                                                                                                            │
+     │                                                                                                                                                                                 │
+     │ 1. Update options - Add CSI fields, constants, validation, and helper method                                                                                                    │
+     │ 2. Add Nomad CSI methods - VolumeExists, CreateCSIVolume, DeleteCSIVolume                                                                                                       │
+     │ 3. Update create command - Conditional volume creation and job configuration                                                                                                    │
+     │ 4. Update delete command - Add volume cleanup after job deletion                                                                                                                │
+     │ 5. Update provider.yaml - Expose new options                                                                                                                                    │
+     │ 6. Add unit tests - Test validation and volume ID generation                                                                                                                    │
+     │                                                                                                                                                                                 │
+     │ Testing                                                                                                                                                                         │
+     │                                                                                                                                                                                 │
+     │ Test persistent mode:                                                                                                                                                           │
+     │                                                                                                                                                                                 │
+     │ devpod delete 'vscode-remote-try-node'                                                                                                                                          │
+     │ devpod provider delete nomad                                                                                                                                                    │
+     │ RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev                                                                                                                                 │
+     │                                                                                                                                                                                 │
+     │ devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \                                                                                                │
+     │   --provider-option NOMAD_STORAGE_MODE=persistent \                                                                                                                             │
+     │   --provider-option NOMAD_CSI_CLUSTER_ID=70464857-9ed6-11f0-8df5-d45d64d7d4f0 \                                                                                                 │
+     │   --provider-option NOMAD_DISKMB=1024                                                                                                                                           │
+     │                                                                                                                                                                                 │
+     │ Verify volume created:                                                                                                                                                          │
+     │                                                                                                                                                                                 │
+     │ nomad volume status | grep devpod                                                                                                                                               │
+     │                                                                                                                                                                                 │
+     │ Test persistence:                                                                                                                                                               │
+     │                                                                                                                                                                                 │
+     │ devpod stop vscode-remote-try-node                                                                                                                                              │
+     │ devpod up github.com/microsoft/vscode-remote-try-node --provider nomad                                                                                                          │
+     │ devpod ssh vscode-remote-try-node                                                                                                                                               │
+     │ # Verify files persist                                                                                                                                                          │
+     │                                                                                                                                                                                 │
+     │ Test cleanup:                                                                                                                                                                   │
+     │                                                                                                                                                                                 │
+     │ devpod delete vscode-remote-try-node                                                                                                                                            │
+     │ nomad volume status | grep devpod  # Should be empty                                                                                                                            │
+     │                                                                                                                                                                                 │
+     │ Considerations                                                                                                                                                                  │
+     │                                                                                                                                                                                 │
+     │ 1. Volume detachment timing: After job deletion, volume may need time to detach. Consider retry loop in DeleteCSIVolume.                                                        │
+     │ 2. Agent paths: Current AGENT_PATH defaults to /tmp/devpod-workspaces/devpod. For persistent mode, agent data should be on the CSI volume at /workspace.                        │
+     │ 3. Docker-in-Docker: Current implementation requires same path on host/container. CSI mount is managed by Nomad which handles this.
+
+
+
+     The implementation is complete. Here's a summary of the changes:
+
+  Changes Made
+
+  1. pkg/options/options.go
+
+  - Added CSI storage fields: StorageMode, CSIPluginID, CSIClusterID, CSIPool
+  - Added constants: StorageModeEphemeral, StorageModePersistent
+  - Added ValidateCSI() method for validation
+  - Added GetVolumeID() helper that returns devpod-{JobId}
+
+  2. pkg/nomad/nomad.go
+
+  - Added VolumeExists() - checks if a CSI volume exists
+  - Added CreateCSIVolume() - creates a CSI volume with Ceph-specific parameters
+  - Added DeleteCSIVolume() - deregisters and deletes a CSI volume
+
+  3. cmd/create.go
+
+  - Creates CSI volume if NOMAD_STORAGE_MODE=persistent and volume doesn't exist
+  - Mounts CSI volume at /workspace in persistent mode
+  - Uses ephemeral disk (existing behavior) in ephemeral mode
+
+  4. cmd/delete.go
+
+  - Deletes CSI volume after job deletion in persistent mode
+  - Logs warning if volume deletion fails (doesn't block cleanup)
+
+  5. hack/provider/provider.yaml
+
+  - Added new options: NOMAD_STORAGE_MODE, NOMAD_CSI_PLUGIN_ID, NOMAD_CSI_CLUSTER_ID, NOMAD_CSI_POOL
+
+  6. pkg/options/options_test.go
+
+  - Added unit tests for CSI validation
+
+  Testing
+
+  To test with persistent storage:
+
+  # Clean up existing workspace and provider
+  devpod delete 'vscode-remote-try-node'
+  devpod provider delete nomad
+
+  # Install the dev build
+  devpod provider add ./release/provider.yaml --name nomad
+
+  # Launch with persistent storage
+  devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
+    --provider-option NOMAD_STORAGE_MODE=persistent \
+    --provider-option NOMAD_CSI_CLUSTER_ID=70464857-9ed6-11f0-8df5-d45d64d7d4f0 \
+    --provider-option NOMAD_DISKMB=10240
+
+  # Verify the CSI volume was created
+  curl -s http://10.0.1.12:4646/v1/volumes?type=csi | grep devpod
+
+  # Test persistence
+  devpod stop vscode-remote-try-node
+  devpod up github.com/microsoft/vscode-remote-try-node --provider nomad
+
+  # Clean up (should also delete the CSI volume)
+  devpod delete vscode-remote-try-node
+
+  1. Store Ceph credentials in Vault
+
+  # Get your Ceph admin key
+  ceph auth get-key client.admin
+
+  # Store in Vault KV v2
+  vault kv put secret/ceph/csi \
+    userID="admin" \
+    userKey="<your-ceph-admin-key>"
+
+  2. Set VAULT_TOKEN in your environment
+
+  export VAULT_TOKEN="<your-vault-token>"
+
+  3. Run devpod with the required options
+
+  devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \
+    --provider-option NOMAD_CPU=2000 \
+    --provider-option NOMAD_MEMORYMB=8192 \
+    --provider-option NOMAD_DISKMB=512 \
+    --provider-option NOMAD_STORAGE_MODE=persistent \
+    --provider-option NOMAD_CSI_CLUSTER_ID=70464857-9ed6-11f0-8df5-d45d64d7d4f0 \
+    --provider-option VAULT_ADDR=https://vault.service.consul:8200 \
+    --provider-option NOMAD_CSI_VAULT_PATH=secret/data/ceph/csi
+
+  Key points:
+  - VAULT_TOKEN must be set as an environment variable (not a provider option)
+  - NOMAD_CSI_VAULT_PATH uses KV v2 format: secret/data/ceph/csi (note the /data/ in the path)
+  - The Vault secret must have exactly two fields: userID and userKey
+
+
+Fix CSI Persistent Storage with Docker-in-Docker
+
+ Problem Summary
+
+ CSI persistent storage fails because Docker-in-Docker looks for bind mount paths on the HOST, but CSI volumes are mounted inside the container at a different path.
+
+ Chosen Solution: Hybrid Storage
+
+ Keep host bind mount for Docker compatibility, mount CSI at /persistent, sync data between them.
+
+ Implementation Plan
+
+ File: cmd/create.go
+
+ Step 1: Always include host bind mount (line ~157-161)
+
+ Change from:
+ if options.StorageMode != opts.StorageModePersistent {
+     dockerVolumes = append(dockerVolumes, sharedWorkspacePath+":"+sharedWorkspacePath)
+ }
+
+ To:
+ // Always include host bind mount for Docker-in-Docker compatibility
+ dockerVolumes = append(dockerVolumes, sharedWorkspacePath+":"+sharedWorkspacePath)
+
+ Step 2: Mount CSI volume at /persistent (line ~204-208)
+
+ Change from:
+ volumeName := "workspace"
+ persistentMountPath := sharedWorkspacePath // /tmp/devpod-workspaces
+
+ To:
+ volumeName := "workspace"
+ persistentMountPath := "/persistent"
+
+ Step 3: Update startup command to sync from CSI (line ~64)
+
+ Update runCmd to:
+ 1. Check if /persistent has existing data (returning workspace)
+ 2. If yes, rsync from /persistent to /tmp/devpod-workspaces
+ 3. Start background sync process to periodically copy changes back to /persistent
+ 4. Continue with normal startup
+
+ New command structure:
+ /bin/sh -c '
+   mkdir -p /tmp/devpod-workspaces /persistent
+
+   # Restore from persistent storage if it has data
+   if [ -d /persistent/agent ] && [ "$(ls -A /persistent/agent 2>/dev/null)" ]; then
+     echo "Restoring workspace from persistent storage..."
+     cp -a /persistent/. /tmp/devpod-workspaces/
+   fi
+
+   # Background sync: periodically save to persistent storage
+   (while true; do
+     sleep 60
+     rsync -a --delete /tmp/devpod-workspaces/ /persistent/ 2>/dev/null || true
+   done) &
+
+   # ... rest of existing startup (apt-get, vault secrets, etc.)
+ '
+
+ Step 4: Add graceful shutdown sync
+
+ Add a trap or final sync before sleep infinity:
+ # Sync before sleeping (and on any exit)
+ trap 'rsync -a --delete /tmp/devpod-workspaces/ /persistent/' EXIT
+
+ Summary of Changes
+
+ | Location              | Change                                         |
+ |-----------------------|------------------------------------------------|
+ | cmd/create.go:157-161 | Remove conditional, always add host bind mount |
+ | cmd/create.go:207     | Change persistentMountPath to /persistent      |
+ | cmd/create.go:64      | Update runCmd with sync logic                  |
+
+ Testing
+
+ After implementation:
+ 1. Delete existing workspace: devpod delete multistep-transcriber
+ 2. Rebuild provider: RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+ 3. Reinstall: devpod provider delete nomad && devpod provider add release/provider.yaml
+ 4. Test: devpod up ... --provider-option NOMAD_STORAGE_MODE=persistent ...
+ 5. Create a file in workspace, stop/start, verify file persists
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+Yes, that's correct. The implementation has two sync mechanisms:
+
+  1. Background sync - Every 60 seconds, changes are copied from /tmp/devpod-workspaces to /persistent (the CSI volume)
+  2. Exit trap - When the container receives a stop signal (from devpod stop), this runs:
+  trap 'echo "Syncing to persistent storage..."; rsync -a --delete /tmp/devpod-workspaces/ /persistent/' EXIT
+
+  So when you run devpod stop:
+  1. Nomad sends SIGTERM to the container
+  2. The shell's EXIT trap fires
+  3. Final rsync copies all data to the CSI volume (Ceph storage)
+  4. Container shuts down
+
+  When you later run devpod up again with the same workspace, the startup script will restore from /persistent back to /tmp/devpod-workspaces.
+
+
+│ Plan to implement                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ GPU Support for devpod-provider-nomad                                                                                                                                                │
+│                                                                                                                                                                                      │
+│ Context                                                                                                                                                                              │
+│                                                                                                                                                                                      │
+│ The user is running a devcontainer that requires GPU access (for ML/transcription workloads), but the devpod-provider-nomad has no GPU support. DevPod's hostRequirements.gpu from   │
+│ devcontainer.json is NOT passed to providers via DEVCONTAINER_RUN_OPTIONS, so we must use provider options as the mechanism, which users can set via remoteEnv in devcontainer.json. │
+│                                                                                                                                                                                      │
+│ Cluster GPU requirements (from deployment guide):                                                                                                                                    │
+│ - Docker runtime: nvidia                                                                                                                                                             │
+│ - Environment: NVIDIA_VISIBLE_DEVICES=all                                                                                                                                            │
+│ - Shared memory: 2GB (shm_size=2147483648)                                                                                                                                           │
+│ - Constraints: meta.gpu-dedicated != true, attr.cpu.arch = amd64                                                                                                                     │
+│                                                                                                                                                                                      │
+│ Implementation Plan                                                                                                                                                                  │
+│                                                                                                                                                                                      │
+│ 1. Add Provider Options (hack/provider/provider.yaml)                                                                                                                                │
+│                                                                                                                                                                                      │
+│ Add after line 94 (after CSI options):                                                                                                                                               │
+│                                                                                                                                                                                      │
+│ NOMAD_GPU:                                                                                                                                                                           │
+│   description: |-                                                                                                                                                                    │
+│     Enable NVIDIA GPU support for the workspace.                                                                                                                                     │
+│     Set to "true" to enable GPU support.                                                                                                                                             │
+│   default: "false"                                                                                                                                                                   │
+│ NOMAD_GPU_COUNT:                                                                                                                                                                     │
+│   description: |-                                                                                                                                                                    │
+│     Number of GPUs to request (default: 1).                                                                                                                                          │
+│     Only used when NOMAD_GPU is "true".                                                                                                                                              │
+│   default: "1"                                                                                                                                                                       │
+│ NOMAD_GPU_COMPUTE_CAPABILITY:                                                                                                                                                        │
+│   description: |-                                                                                                                                                                    │
+│     Minimum CUDA compute capability (e.g., "7.5" for Turing, "8.0" for Ampere).                                                                                                      │
+│     Common values: 6.1 (Pascal), 7.0 (Volta), 7.5 (Turing), 8.0 (A100), 8.6 (RTX 3090).                                                                                              │
+│     Leave empty to accept any GPU.                                                                                                                                                   │
+│   default:                                                                                                                                                                           │
+│                                                                                                                                                                                      │
+│ 2. Update Options Struct (pkg/options/options.go)                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ Add fields to Options struct (after line 45):                                                                                                                                        │
+│ // GPU configuration                                                                                                                                                                 │
+│ GPUEnabled           bool                                                                                                                                                            │
+│ GPUCount             int                                                                                                                                                             │
+│ GPUComputeCapability string                                                                                                                                                          │
+│                                                                                                                                                                                      │
+│ Add constant (after line 58):                                                                                                                                                        │
+│ defaultGPUCount = 1                                                                                                                                                                  │
+│                                                                                                                                                                                      │
+│ Add parsing in DefaultOptions() (after line 130):                                                                                                                                    │
+│ // Parse GPU configuration                                                                                                                                                           │
+│ gpuEnabled := strings.ToLower(getEnv("NOMAD_GPU", "false")) == "true"                                                                                                                │
+│ gpuCount := 1                                                                                                                                                                        │
+│ if gpuCountStr := os.Getenv("NOMAD_GPU_COUNT"); gpuCountStr != "" {                                                                                                                  │
+│     if count, err := strconv.Atoi(gpuCountStr); err == nil && count > 0 {                                                                                                            │
+│         gpuCount = count                                                                                                                                                             │
+│     }                                                                                                                                                                                │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ Add to opts initialization and call validation.                                                                                                                                      │
+│                                                                                                                                                                                      │
+│ Add ValidateGPU() function (after ValidateCSI):                                                                                                                                      │
+│ func (o *Options) ValidateGPU() error {                                                                                                                                              │
+│     if !o.GPUEnabled {                                                                                                                                                               │
+│         return nil                                                                                                                                                                   │
+│     }                                                                                                                                                                                │
+│     if o.GPUCount < 1 {                                                                                                                                                              │
+│         return fmt.Errorf("NOMAD_GPU_COUNT must be at least 1")                                                                                                                      │
+│     }                                                                                                                                                                                │
+│     if o.GPUComputeCapability != "" {                                                                                                                                                │
+│         // Validate format X.Y                                                                                                                                                       │
+│         parts := strings.Split(o.GPUComputeCapability, ".")                                                                                                                          │
+│         if len(parts) != 2 {                                                                                                                                                         │
+│             return fmt.Errorf("NOMAD_GPU_COMPUTE_CAPABILITY must be X.Y format")                                                                                                     │
+│         }                                                                                                                                                                            │
+│         for _, p := range parts {                                                                                                                                                    │
+│             if _, err := strconv.Atoi(p); err != nil {                                                                                                                               │
+│                 return fmt.Errorf("NOMAD_GPU_COMPUTE_CAPABILITY must be numeric")                                                                                                    │
+│             }                                                                                                                                                                        │
+│         }                                                                                                                                                                            │
+│     }                                                                                                                                                                                │
+│     return nil                                                                                                                                                                       │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ 3. Modify Job Creation (cmd/create.go)                                                                                                                                               │
+│                                                                                                                                                                                      │
+│ Add helper function (before func (cmd *CreateCmd) Run):                                                                                                                              │
+│ func buildGPUDeviceRequest(options *opts.Options) *api.RequestedDevice {                                                                                                             │
+│     count := uint64(options.GPUCount)                                                                                                                                                │
+│     device := &api.RequestedDevice{                                                                                                                                                  │
+│         Name:  "nvidia/gpu",                                                                                                                                                         │
+│         Count: &count,                                                                                                                                                               │
+│     }                                                                                                                                                                                │
+│     if options.GPUComputeCapability != "" {                                                                                                                                          │
+│         device.Constraints = append(device.Constraints, &api.Constraint{                                                                                                             │
+│             LTarget: "${meta.gpu_compute_capability}",                                                                                                                       │
+│             Operand: ">=",                                                                                                                                                           │
+│             RTarget: options.GPUComputeCapability,                                                                                                                                   │
+│         })                                                                                                                                                                           │
+│     }                                                                                                                                                                                │
+│     return device                                                                                                                                                                    │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ Modify resource allocation (after line 191):                                                                                                                                         │
+│ if options.GPUEnabled {                                                                                                                                                              │
+│     gpuDevice := buildGPUDeviceRequest(options)                                                                                                                                      │
+│     jobResources.Devices = []*api.RequestedDevice{gpuDevice}                                                                                                                         │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ Modify task config (after line 224, when building task.Config):                                                                                                                      │
+│ if options.GPUEnabled {                                                                                                                                                              │
+│     task.Config["runtime"] = "nvidia"                                                                                                                                                │
+│     task.Config["shm_size"] = int64(2147483648) // 2GB                                                                                                                               │
+│     if task.Env == nil {                                                                                                                                                             │
+│         task.Env = make(map[string]string)                                                                                                                                           │
+│     }                                                                                                                                                                                │
+│     task.Env["NVIDIA_VISIBLE_DEVICES"] = "all"                                                                                                                                       │
+│     task.Env["NVIDIA_DRIVER_CAPABILITIES"] = "compute,utility"                                                                                                                       │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ Add job constraints (after line 293, when building job):                                                                                                                             │
+│ if options.GPUEnabled {                                                                                                                                                              │
+│     job.Constraints = append(job.Constraints,                                                                                                                                        │
+│         &api.Constraint{LTarget: "${attr.cpu.arch}", Operand: "=", RTarget: "amd64"},                                                                                                │
+│         &api.Constraint{LTarget: "${meta.gpu-dedicated}", Operand: "!=", RTarget: "true"},                                                                                           │
+│     )                                                                                                                                                                                │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ 4. Add Unit Tests (pkg/options/options_test.go)                                                                                                                                      │
+│                                                                                                                                                                                      │
+│ Add tests following existing patterns:                                                                                                                                               │
+│ - TestValidateGPU_Disabled - no error when GPU disabled                                                                                                                              │
+│ - TestValidateGPU_ValidConfig - valid GPU configuration passes                                                                                                                       │
+│ - TestValidateGPU_InvalidComputeCapability - invalid format rejected                                                                                                                 │
+│ - TestValidateGPU_InvalidCount - count < 1 rejected                                                                                                                                  │
+│ - TestDefaultOptions_GPU - defaults are correct                                                                                                                                      │
+│                                                                                                                                                                                      │
+│ 5. Update Documentation                                                                                                                                                              │
+│                                                                                                                                                                                      │
+│ CLAUDE.md - Add GPU testing section with test commands.                                                                                                                              │
+│                                                                                                                                                                                      │
+│ README.md (if exists) - Add GPU Support section.                                                                                                                                     │
+│                                                                                                                                                                                      │
+│ Files to Modify                                                                                                                                                                      │
+│ ┌─────────────────────────────┬──────────────────────────────────────────────────────────────────────┐                                                                               │
+│ │            File             │                               Changes                                │                                                                               │
+│ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────┤                                                                               │
+│ │ hack/provider/provider.yaml │ Add NOMAD_GPU, NOMAD_GPU_COUNT, NOMAD_GPU_COMPUTE_CAPABILITY options │                                                                               │
+│ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────┤                                                                               │
+│ │ pkg/options/options.go      │ Add GPU fields, parsing, ValidateGPU()                               │                                                                               │
+│ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────┤                                                                               │
+│ │ cmd/create.go               │ Add buildGPUDeviceRequest(), modify task config and job constraints  │                                                                               │
+│ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────┤                                                                               │
+│ │ pkg/options/options_test.go │ Add GPU validation tests                                             │                                                                               │
+│ ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────┤                                                                               │
+│ │ CLAUDE.md                   │ Add GPU testing instructions                                         │                                                                               │
+│ └─────────────────────────────┴──────────────────────────────────────────────────────────────────────┘                                                                               │
+│ User Usage                                                                                                                                                                           │
+│                                                                                                                                                                                      │
+│ Via command line:                                                                                                                                                                    │
+│ devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \                                                                                                           │
+│   --provider-option NOMAD_GPU=true \                                                                                                                                                 │
+│   --provider-option NOMAD_GPU_COMPUTE_CAPABILITY=7.5                                                                                                                                 │
+│                                                                                                                                                                                      │
+│ Via devcontainer.json (using remoteEnv as workaround):                                                                                                                               │
+│ {                                                                                                                                                                                    │
+│   "name": "Multistep Transcriber",                                                                                                                                                   │
+│   "image": "registry.cluster:5000/devcontainer-python:20251106b",                                                                                                                    │
+│   "remoteEnv": {                                                                                                                                                                     │
+│     "NOMAD_GPU": "true",                                                                                                                                                             │
+│     "NOMAD_GPU_COMPUTE_CAPABILITY": "7.5"                                                                                                                                            │
+│   }                                                                                                                                                                                  │
+│ }                                                                                                                                                                                    │
+│                                                                                                                                                                                      │
+│ Verification                                                                                                                                                                         │
+│                                                                                                                                                                                      │
+│ 1. Build provider: RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev                                                                                                                   │
+│ 2. Run tests: go test ./pkg/options/...                                                                                                                                              │
+│ 3. Launch GPU workspace and verify:                                                                                                                                                  │
+│ devpod up github.com/geraldthewes/multistep-transcriber --provider nomad \                                                                                                           │
+│   --provider-option NOMAD_GPU=true --debug                                                                                                                                           │
+│                                                                                                                                                                                      │
+│ # Check Nomad job has GPU device request                                                                                                                                             │
+│ nomad job inspect multistep-transcriber | jq '.Job.TaskGroups[0].Tasks[0].Resources.Devices'                                                                                         │
+│                                                                                                                                                                                      │
+│ # Check Docker runtime is nvidia                                                                                                                                                     │
+│ nomad job inspect multistep-transcriber | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'                                                                                            │
+│                                                                                                                                                                                      │
+│ # SSH and verify GPU access                                                                                                                                                          │
+│ devpod ssh multistep-transcriber                                                                                                                                                     │
+│ nvidia-smi
+
+
+   
+  Files Modified                                                                                                                                                                        
+  ┌─────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │            File             │                                                              Changes                                                               │                  
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                  
+  │ hack/provider/provider.yaml │ Added NOMAD_GPU, NOMAD_GPU_COUNT, NOMAD_GPU_COMPUTE_CAPABILITY options                                                             │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ pkg/options/options.go      │ Added GPUEnabled, GPUCount, GPUComputeCapability fields, parsing logic, and ValidateGPU() function                                 │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ cmd/create.go               │ Added buildGPUDeviceRequest() helper, GPU device allocation, nvidia runtime config, shm_size, NVIDIA env vars, and job constraints │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ pkg/options/options_test.go │ Added 9 new GPU validation tests (all passing)                                                                                     │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ CLAUDE.md                   │ Added GPU testing section with examples and troubleshooting                                                                        │
+  └─────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  Key Features
+
+  1. Provider Options: Users can enable GPU with NOMAD_GPU=true, specify count with NOMAD_GPU_COUNT, and set minimum compute capability with NOMAD_GPU_COMPUTE_CAPABILITY
+  2. Nomad Job Configuration:
+    - Adds nvidia/gpu device request with optional compute capability constraint
+    - Sets Docker runtime to nvidia
+    - Configures 2GB shared memory for ML workloads
+    - Sets NVIDIA_VISIBLE_DEVICES=all and NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    - Adds job constraints for amd64 architecture and non-dedicated GPU nodes
+  3. Validation: Properly validates GPU configuration (count >= 1, compute capability format X.Y)
+
+  Build & Tests
+
+  go build ./...     ✓
+  go test ./...      ✓ (16 tests pass including 9 new GPU tests)
+
+ Problem: Users want to specify provider options (GPU, resources, Vault secrets) in their repository without needing command-line flags every time.
+
+ Solution: Add support for reading provider options from a .devpod/nomad.yaml config file in the workspace.
+
+ Implementation Plan
+
+ 1. Create Config File Types (pkg/options/config.go)
+
+ New file with:
+ - ConfigFile struct matching all provider options
+ - LoadConfigFile(workspacePath string) function to read and parse YAML
+ - GetWorkspacePath() function to extract path from WORKSPACE_SOURCE env var
+
+ # Example .devpod/nomad.yaml
+ nomad_cpu: "2000"
+ nomad_memorymb: "4096"
+ nomad_gpu: true
+ nomad_gpu_count: 1
+ nomad_gpu_compute_capability: "7.5"
+
+ vault_addr: "https://vault.example.com:8200"
+ vault_policies:
+   - "my-policy"
+ vault_secrets:
+   - path: "secret/data/myapp"
+     fields:
+       api_key: "API_KEY"
+
+ 2. Modify pkg/options/options.go
+
+ Update DefaultOptions() to:
+ 1. Call GetWorkspacePath() to find workspace location
+ 2. Call LoadConfigFile() to load config (if exists)
+ 3. Use getEnvOrConfig() helper that checks env var first, then config file, then default
+
+ Precedence: --provider-option flags (env vars) > config file > defaults
+
+ 3. Add Unit Tests (pkg/options/config_test.go)
+
+ - Test file not found (silent, returns nil)
+ - Test empty path (silent, returns nil)
+ - Test valid YAML parsing
+ - Test invalid YAML (returns error)
+ - Test env vars override config file values
+ - Test GetWorkspacePath() with local and git sources
+
+ 4. Update Documentation
+
+ - README.md: Add section on config file usage
+ - CLAUDE.md: Add testing instructions
+
+ Files to Modify
+ ┌────────────────────────────┬───────────────────────────────────────────┐
+ │            File            │                  Changes                  │
+ ├────────────────────────────┼───────────────────────────────────────────┤
+ │ pkg/options/config.go      │ New file - Config file types and loading  │
+ ├────────────────────────────┼───────────────────────────────────────────┤
+ │ pkg/options/config_test.go │ New file - Unit tests                     │
+ ├────────────────────────────┼───────────────────────────────────────────┤
+ │ pkg/options/options.go     │ Modify to merge config file with env vars │
+ ├────────────────────────────┼───────────────────────────────────────────┤
+ │ README.md                  │ Document config file feature              │
+ ├────────────────────────────┼───────────────────────────────────────────┤
+ │ CLAUDE.md                  │ Add testing instructions                  │
+ └────────────────────────────┴───────────────────────────────────────────┘
+ Key Code Changes
+
+ config.go (new file)
+
+ package options
+
+ import (
+     "os"
+     "path/filepath"
+     "strings"
+
+     "gopkg.in/yaml.v3"
+ )
+
+ type ConfigFile struct {
+     NomadCPU      string `yaml:"nomad_cpu"`
+     NomadMemoryMB string `yaml:"nomad_memorymb"`
+     NomadDiskMB   string `yaml:"nomad_diskmb"`
+     // ... all other options
+     NomadGPU      *bool  `yaml:"nomad_gpu"`      // pointer for optional bool
+     NomadGPUCount *int   `yaml:"nomad_gpu_count"`
+     // Vault secrets as native YAML (not JSON string)
+     VaultPolicies []string       `yaml:"vault_policies"`
+     VaultSecrets  []VaultSecret  `yaml:"vault_secrets"`
+ }
+
+ func LoadConfigFile(workspacePath string) (*ConfigFile, error) {
+     if workspacePath == "" {
+         return nil, nil
+     }
+     configPath := filepath.Join(workspacePath, ".devpod", "nomad.yaml")
+     data, err := os.ReadFile(configPath)
+     if os.IsNotExist(err) {
+         return nil, nil  // Not an error
+     }
+     if err != nil {
+         return nil, err
+     }
+     var config ConfigFile
+     return &config, yaml.Unmarshal(data, &config)
+ }
+
+ func GetWorkspacePath() string {
+     source := os.Getenv("WORKSPACE_SOURCE")
+     if strings.HasPrefix(source, "local:") {
+         return strings.TrimPrefix(source, "local:")
+     }
+     return ""  // Git sources: path not available to provider
+ }
+
+ options.go changes
+
+ func DefaultOptions() (*Options, error) {
+     // Load config file (if available)
+     workspacePath := GetWorkspacePath()
+     configFile, err := LoadConfigFile(workspacePath)
+     if err != nil {
+         return nil, fmt.Errorf("failed to load config file: %w", err)
+     }
+
+     // ... rest uses getEnvOrConfig helper
+     gpuEnabled := getGPUEnabled(configFile)  // checks env first, then config
+     // ...
+ }
+
+ func getEnvOrConfig(envKey, configValue, defaultValue string) string {
+     if value, ok := os.LookupEnv(envKey); ok {
+         return value
+     }
+     if configValue != "" {
+         return configValue
+     }
+     return defaultValue
+ }
+
+ Limitations
+
+ Git sources: Config file loading only works for local workspace sources (devpod up /path/to/local/project). For git-based workspaces, users must still use --provider-option flags
+ because the cloned repo path is not exposed to the provider during create.
+
+ Workaround for git repos: Use devpod provider use nomad --option NOMAD_GPU=true to set default provider options.
+
+ Verification
+
+ Unit Tests
+
+ cd /home/gerald/repos/devpod-provider-nomad
+ go test ./pkg/options/... -v
+
+ Integration Test (local source)
+
+ # Create test config
+ mkdir -p /tmp/test-project/.devpod
+ cat > /tmp/test-project/.devpod/nomad.yaml << 'EOF'
+ nomad_gpu: true
+ nomad_gpu_compute_capability: "7.5"
+ nomad_cpu: "2000"
+ nomad_memorymb: "4096"
+ EOF
+
+ # Build and test
+ devpod delete test-project || true
+ devpod provider delete nomad || true
+ RELEASE_VERSION=0.0.1-dev ./hack/build.sh --dev
+ devpod up /tmp/test-project --provider nomad --ide none --debug
+
+ # Verify GPU configured
+ nomad job inspect test-project | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'
+ # Should output: "nvidia"
+
+ Verify Precedence
+
+ # Config file says GPU=true, but command line overrides
+ devpod up /tmp/test-project --provider nomad --provider-option NOMAD_GPU=false --ide none
+ nomad job inspect test-project | jq '.Job.TaskGroups[0].Tasks[0].Config.runtime'
+ # Should output: null (GPU disabled by command line)
+
+ Dependencies
+
+ - gopkg.in/yaml.v3 - Already available as indirect dependency in go.mod
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+  Summary                                                                                                                                                                               
+                                                                                                                                                                                        
+  I've implemented config file support for provider options. Here are the changes:                                                                                                      
+                                                                                
+  New Files
+
+  1. pkg/options/config.go - Config file types and loading
+    - ConfigFile struct with all provider options as YAML fields
+    - LoadConfigFile() - reads and parses .devpod/nomad.yaml
+    - GetWorkspacePath() - extracts workspace path from WORKSPACE_SOURCE env var
+    - Helper functions: getEnvOrConfig(), getEnvOrConfigBool(), getEnvOrConfigInt()
+  2. pkg/options/config_test.go - Unit tests (16 new tests)
+    - Tests for file not found, empty path, valid YAML, invalid YAML, partial config
+    - Tests for GetWorkspacePath() with local/git sources
+    - Tests for precedence (env var > config file > default)
+
+  Modified Files
+
+  3. pkg/options/options.go - Integrated config file loading
+    - DefaultOptions() now loads config file and merges with env vars
+    - Added getVaultPolicies() and getVaultSecrets() helpers for config fallback
+    - Env vars (--provider-option) always take precedence over config file
+  4. README.md - Added documentation
+    - New "Config File Support" section with quick start, format, and precedence rules
+  5. CLAUDE.md - Added testing instructions
+    - Integration tests for config file feature
+    - Tests for precedence, Vault secrets, and cleanup
+
+  Example Config File
+
+  # .devpod/nomad.yaml
+  nomad_gpu: true
+  nomad_gpu_compute_capability: "7.5"
+  nomad_cpu: "2000"
+  nomad_memorymb: "4096"
+  vault_addr: "https://vault.example.com:8200"
+  vault_policies:
+    - "my-policy"
+  vault_secrets:
+    - path: "secret/data/myapp"
+      fields:
+        api_key: "API_KEY"
+
+  Precedence
+
+  1. --provider-option flags (env vars) - highest priority
+  2. .devpod/nomad.yaml config file
+  3. Provider defaults (devpod provider set-options)
+
+  Limitation
+
+  Config file loading only works for local workspace sources (devpod up /path/to/project). For git sources, users must use --provider-option flags.
+

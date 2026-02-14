@@ -29,18 +29,25 @@ func buildGPUDeviceRequest(options *opts.Options) *api.RequestedDevice {
 		Name:  "nvidia/gpu",
 		Count: &count,
 	}
-
-	if options.GPUComputeCapability != "" {
-		device.Constraints = []*api.Constraint{
-			{
-				LTarget: "${device.attr.cuda_compute_capability}",
-				Operand: ">=",
-				RTarget: options.GPUComputeCapability,
-			},
-		}
-	}
-
 	return device
+}
+
+// buildGPUJobConstraints returns job-level constraints for GPU workloads.
+// Compute capability uses a node meta attribute and must be a job constraint,
+// not a device constraint.
+func buildGPUJobConstraints(options *opts.Options) []*api.Constraint {
+	constraints := []*api.Constraint{
+		{LTarget: "${attr.cpu.arch}", Operand: "=", RTarget: "amd64"},
+		{LTarget: "${meta.gpu-dedicated}", Operand: "!=", RTarget: "true"},
+	}
+	if options.GPUComputeCapability != "" {
+		constraints = append(constraints, &api.Constraint{
+			LTarget: "${meta.gpu_compute_capability}",
+			Operand: ">=",
+			RTarget: options.GPUComputeCapability,
+		})
+	}
+	return constraints
 }
 
 // NewCommandCmd defines a command
@@ -332,18 +339,7 @@ sleep infinity
 
 	// Add GPU-specific job constraints
 	if options.GPUEnabled {
-		job.Constraints = append(job.Constraints,
-			&api.Constraint{
-				LTarget: "${attr.cpu.arch}",
-				Operand: "=",
-				RTarget: "amd64",
-			},
-			&api.Constraint{
-				LTarget: "${meta.gpu-dedicated}",
-				Operand: "!=",
-				RTarget: "true",
-			},
-		)
+		job.Constraints = append(job.Constraints, buildGPUJobConstraints(options)...)
 	}
 
 	_, err = nomadClient.Create(ctx, job)
