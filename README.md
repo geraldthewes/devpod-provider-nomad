@@ -271,8 +271,14 @@ DevPod supports injecting environment variables into your development containers
 
 **IMPORTANT:** Use `remoteEnv` for runtime environment variables in your running container:
 
-- ✅ **`remoteEnv`** - Sets environment variables in the running container (use this!)
+- ✅ **`remoteEnv`** - Sets environment variables in the running container (use this for application vars!)
 - ❌ **`containerEnv`** - Sets environment variables during container build (not what you want for runtime vars)
+
+> **Warning:** `remoteEnv` is for **application-level** environment variables only (e.g., `HF_TOKEN`,
+> `OLLAMA_HOST`, `PYTHONPATH`). Do NOT use `remoteEnv` for **provider options** like `VAULT_ADDR`,
+> `VAULT_SECRETS_JSON`, `NOMAD_GPU`, etc. Provider options must be set via
+> [`.devpod/nomad.yaml`](#config-file-support) or `--provider-option` flags because the provider
+> reads them at **job creation time**, before the container exists.
 
 ### Global Environment Variables
 
@@ -713,20 +719,21 @@ devpod provider set-options nomad \
 devpod provider options nomad
 ```
 
-### Configuration via devcontainer.json
+### Configuration via Config File
 
-Configure GPU support per-project in your `.devcontainer/devcontainer.json`:
+Configure GPU support per-project using `.devpod/nomad.yaml` in your project root:
 
-```json
-{
-  "name": "ML Training Project",
-  "image": "registry.cluster:5000/devcontainer-python:latest",
-  "remoteEnv": {
-    "NOMAD_GPU": "true",
-    "NOMAD_GPU_COMPUTE_CAPABILITY": "7.5"
-  }
-}
+```yaml
+# .devpod/nomad.yaml
+nomad_gpu: true
+nomad_gpu_compute_capability: "7.5"
 ```
+
+> **Important:** Do NOT use `remoteEnv` in `devcontainer.json` for provider options like GPU or Vault.
+> `remoteEnv` sets environment variables inside the running container, but the provider needs
+> these values at **job creation time** (before the container exists). Use `.devpod/nomad.yaml`
+> or `--provider-option` flags instead. `remoteEnv` is only appropriate for application-level
+> environment variables (e.g., `PYTHONPATH`, `OLLAMA_HOST`).
 
 ### What GPU Enablement Configures
 
@@ -1073,19 +1080,25 @@ echo $HUGGING_FACE_HUB_TOKEN
 
 ### Per-Workspace Configuration
 
-You can also configure Vault secrets per-workspace using environment variables in your `.devcontainer/devcontainer.json`:
+Configure Vault secrets per-project using `.devpod/nomad.yaml` in your project root:
 
-```json
-{
-  "name": "ML Training Project",
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
-  "remoteEnv": {
-    "VAULT_ADDR": "https://vault.example.com:8200",
-    "VAULT_POLICIES_JSON": "[\"ml-secrets\"]",
-    "VAULT_SECRETS_JSON": "[{\"path\":\"secret/data/ml/tokens\",\"fields\":{\"api_key\":\"ML_API_KEY\"}}]"
-  }
-}
+```yaml
+# .devpod/nomad.yaml
+vault_addr: "https://vault.example.com:8200"
+vault_policies:
+  - "ml-secrets"
+vault_secrets:
+  - path: "secret/data/ml/tokens"
+    fields:
+      api_key: "ML_API_KEY"
 ```
+
+Commit this file to your repository so team members get the same Vault configuration automatically.
+
+> **Important:** Do NOT use `remoteEnv` in `devcontainer.json` for Vault provider options.
+> `remoteEnv` sets environment variables inside the running container, but the provider needs
+> these values at **job creation time** (before the container exists). Use `.devpod/nomad.yaml`
+> or `--provider-option` flags instead.
 
 ### Advanced Configuration
 

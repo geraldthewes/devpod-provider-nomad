@@ -93,18 +93,22 @@ devpod up github.com/microsoft/vscode-remote-try-node --provider nomad --debug \
 
 ### Test Per-Workspace Configuration
 
-Create `.devcontainer/devcontainer.json` with Vault config:
-```json
-{
-  "name": "Test with Vault",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:latest",
-  "remoteEnv": {
-    "VAULT_ADDR": "https://vault.example.com:8200",
-    "VAULT_POLICIES_JSON": "[\"devpod-test\"]",
-    "VAULT_SECRETS_JSON": "[{\"path\":\"secret/data/test/devpod\",\"fields\":{\"test_key\":\"TEST_KEY\"}}]"
-  }
-}
+Create `.devpod/nomad.yaml` in the project root with Vault config:
+```yaml
+# .devpod/nomad.yaml
+vault_addr: "https://vault.example.com:8200"
+vault_policies:
+  - "devpod-test"
+vault_secrets:
+  - path: "secret/data/test/devpod"
+    fields:
+      test_key: "TEST_KEY"
 ```
+
+> **Note:** Do NOT use `remoteEnv` in `devcontainer.json` for Vault/GPU provider options.
+> `remoteEnv` only sets environment variables inside the running container — the provider
+> needs these values at job creation time, before the container exists. Use `.devpod/nomad.yaml`
+> or `--provider-option` flags instead.
 
 ### Verify Vault Integration
 
@@ -229,19 +233,17 @@ devpod up github.com/geraldthewes/multistep-transcriber --provider nomad --debug
   --provider-option NOMAD_GPU_COUNT=2
 ```
 
-### GPU via devcontainer.json
+### GPU via Config File
 
-Create `.devcontainer/devcontainer.json`:
-```json
-{
-  "name": "GPU Workspace",
-  "image": "registry.cluster:5000/devcontainer-python:20251106b",
-  "remoteEnv": {
-    "NOMAD_GPU": "true",
-    "NOMAD_GPU_COMPUTE_CAPABILITY": "7.5"
-  }
-}
+Create `.devpod/nomad.yaml` in the project root:
+```yaml
+# .devpod/nomad.yaml
+nomad_gpu: true
+nomad_gpu_compute_capability: "7.5"
 ```
+
+> **Note:** Do NOT use `remoteEnv` in `devcontainer.json` for GPU provider options.
+> The provider reads these at job creation time via `.devpod/nomad.yaml` or `--provider-option` flags.
 
 ### Verify GPU Configuration
 
