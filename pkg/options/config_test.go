@@ -436,3 +436,56 @@ func TestGetEnvOrConfigInt_InvalidEnvFallsToConfig(t *testing.T) {
 		t.Errorf("Expected 15 from config (invalid env), got %d", result)
 	}
 }
+
+func TestGetEnvOrConfig_EmptyEnvFallsToConfig(t *testing.T) {
+	orig := os.Getenv("TEST_EMPTY_ENV")
+	defer func() {
+		if orig != "" {
+			os.Setenv("TEST_EMPTY_ENV", orig)
+		} else {
+			os.Unsetenv("TEST_EMPTY_ENV")
+		}
+	}()
+
+	os.Setenv("TEST_EMPTY_ENV", "")
+	result := getEnvOrConfig("TEST_EMPTY_ENV", "config_value", "default_value")
+	if result != "config_value" {
+		t.Errorf("Expected config_value when env is empty, got %s", result)
+	}
+}
+
+func TestGetEnvOrConfigBool_EmptyEnvFallsToConfig(t *testing.T) {
+	orig := os.Getenv("TEST_EMPTY_BOOL_ENV")
+	defer func() {
+		if orig != "" {
+			os.Setenv("TEST_EMPTY_BOOL_ENV", orig)
+		} else {
+			os.Unsetenv("TEST_EMPTY_BOOL_ENV")
+		}
+	}()
+
+	os.Setenv("TEST_EMPTY_BOOL_ENV", "")
+	configValue := true
+	result := getEnvOrConfigBool("TEST_EMPTY_BOOL_ENV", &configValue, false)
+	if result != true {
+		t.Errorf("Expected true from config when env is empty, got %v", result)
+	}
+}
+
+func TestGetEnvOrConfigInt_EmptyEnvFallsToConfig(t *testing.T) {
+	orig := os.Getenv("TEST_EMPTY_INT_ENV")
+	defer func() {
+		if orig != "" {
+			os.Setenv("TEST_EMPTY_INT_ENV", orig)
+		} else {
+			os.Unsetenv("TEST_EMPTY_INT_ENV")
+		}
+	}()
+
+	os.Setenv("TEST_EMPTY_INT_ENV", "")
+	configValue := 42
+	result := getEnvOrConfigInt("TEST_EMPTY_INT_ENV", &configValue, 1)
+	if result != 42 {
+		t.Errorf("Expected 42 from config when env is empty, got %d", result)
+	}
+}

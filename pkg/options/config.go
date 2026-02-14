@@ -95,7 +95,7 @@ func GetWorkspacePath() string {
 // otherwise returns the config file value if non-empty,
 // otherwise returns the default value.
 func getEnvOrConfig(envKey, configValue, defaultValue string) string {
-	if value, ok := os.LookupEnv(envKey); ok {
+	if value, ok := os.LookupEnv(envKey); ok && value != "" {
 		return value
 	}
 	if configValue != "" {
@@ -108,7 +108,7 @@ func getEnvOrConfig(envKey, configValue, defaultValue string) string {
 // otherwise returns the config file value if non-nil,
 // otherwise returns the default value.
 func getEnvOrConfigBool(envKey string, configValue *bool, defaultValue bool) bool {
-	if value, ok := os.LookupEnv(envKey); ok {
+	if value, ok := os.LookupEnv(envKey); ok && value != "" {
 		return strings.ToLower(value) == "true"
 	}
 	if configValue != nil {
