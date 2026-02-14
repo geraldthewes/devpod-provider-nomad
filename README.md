@@ -31,6 +31,7 @@ A [DevPod](https://devpod.sh/) provider for [HashiCorp Nomad](https://www.nomadp
 - [DevPod Context Options](#devpod-context-options)
 - [Testing Locally](#testing-locally)
 - [Development vs Production Builds](#development-vs-production-builds)
+- [Releasing](#releasing)
 
 ---
 
@@ -1416,3 +1417,51 @@ The `--dev` flag creates a rapid iteration loop for development:
 4. Test immediately with local binaries
 
 **Recommendation:** Use `--dev` for local development and testing. Only use production builds when creating official releases.
+
+## Releasing
+
+Releases are built locally and uploaded to GitHub. The GitHub Actions release workflow is not functional (uses deprecated `macos-12` runner and outdated action versions).
+
+### Steps
+
+**Step 1:** Create and push the git tag:
+
+```bash
+git tag v0.x.y
+git push origin v0.x.y
+```
+
+**Step 2:** Build release binaries for all platforms:
+
+```bash
+RELEASE_VERSION=v0.x.y ./hack/build.sh
+```
+
+This builds binaries for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and windows/amd64, along with SHA256 checksums and `provider.yaml`. All artifacts are placed in the `release/` directory.
+
+**Step 3:** Create the GitHub release and upload artifacts:
+
+```bash
+gh release create v0.x.y --title "v0.x.y" --notes "Release notes here..."
+gh release upload v0.x.y release/*
+```
+
+Or combine into a single step:
+
+```bash
+gh release create v0.x.y --title "v0.x.y" --notes "Release notes here..." release/*
+```
+
+**Step 4:** Verify the release:
+
+```bash
+gh release view v0.x.y
+```
+
+Confirm all expected assets are listed:
+- `devpod-provider-nomad-linux-amd64` + `.sha256`
+- `devpod-provider-nomad-linux-arm64` + `.sha256`
+- `devpod-provider-nomad-darwin-amd64` + `.sha256`
+- `devpod-provider-nomad-darwin-arm64` + `.sha256`
+- `devpod-provider-nomad-windows-amd64.exe` + `.sha256`
+- `provider.yaml`
