@@ -417,3 +417,24 @@ devpod delete test-project || true
 devpod delete no-config-project || true
 rm -rf /tmp/test-project /tmp/no-config-project
 ```
+
+## Releasing
+
+The GitHub Actions release workflow (`.github/workflows/release.yml`) is not functional. Releases must be built locally and uploaded manually.
+
+```bash
+# 1. Tag and push
+git tag v0.x.y
+git push origin v0.x.y
+
+# 2. Build binaries for all platforms
+RELEASE_VERSION=v0.x.y ./hack/build.sh
+
+# 3. Create GitHub release and upload artifacts
+gh release create v0.x.y --title "v0.x.y" --notes "Release notes..." release/*
+
+# 4. Verify
+gh release view v0.x.y
+```
+
+See the [Releasing section in README.md](README.md#releasing) for full details.
